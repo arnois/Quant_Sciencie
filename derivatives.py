@@ -209,8 +209,11 @@ def american_option(S: float, X: float, val_qdt: ql.Date, mty_qdt: ql.Date,
     volatility = ql.BlackVolTermStructureHandle(model_sigma)
     initialValue = ql.QuoteHandle(ql.SimpleQuote(S))
     process = ql.BlackScholesMertonProcess(initialValue, yTS, rTS, volatility)
-    tGrid, xGrid = 2000, 200
-    engine = ql.FdBlackScholesVanillaEngine(process, tGrid, xGrid)
+    ## grid
+    steps = 200
+    rng = "pseudorandom" # could use "lowdiscrepancy"
+    numPaths = 100000
+    engine = ql.MCAmericanEngine(process, rng, steps, requiredSamples=numPaths)
     
     # Option
     amerOption = ql.VanillaOption(payoff, amerExercise)
@@ -222,8 +225,8 @@ def american_option(S: float, X: float, val_qdt: ql.Date, mty_qdt: ql.Date,
 Lets create 1M ATM call/put options for UNH
 """
 # Option objects
-UNH_Call = european_option(530, 530, 30, 20/100, 5.33/100, 1.5/100, 'call')
-UNH_Put = european_option(530, 530, 30, 20/100, 5.33/100, 1.5/100, 'P')
+UNH_Call = european_option(530, 530, 30, 20/100, 5.33/100, 0*1.5/100, 'call')
+UNH_Put = european_option(530, 530, 30, 20/100, 5.33/100, 0*1.5/100, 'P')
 
 # Option prices
 print(f'\nUNH:\n\t Call: {UNH_Call.NPV():,.6f}\n\t Put: {UNH_Put.NPV():,.6f}')
@@ -236,10 +239,11 @@ print(f'\nUNH Options Greeks:\n\tCall/Put\n\t\tDelta: {UNH_Call.delta():,.4f}'+\
       f'/{UNH_Put.theta():,.4f}\n\t\tRho: {UNH_Call.rho():,.4f}/{UNH_Put.rho():,.4f}')
 
 # American option verison
-UNH_aCall = american_option(530, 530, ql.Date(26,10,2023), ql.Date(25,11,2023), 
-                            20/100, 5.33/100, 1.5/100, 'call')
-UNH_aPut = american_option(530, 530, ql.Date(26,10,2023), ql.Date(25,11,2023), 
-                           20/100, 5.33/100, 1.5/100, 'P')
+UNH_aCall = american_option(530, 530, ql.Date(27,10,2023), ql.Date(26,11,2023), 
+                            20/100, 5.33/100, 0*1.5/100, 'call')
+UNH_aPut = american_option(530, 530, ql.Date(27,10,2023), ql.Date(26,11,2023), 
+                           20/100, 5.33/100, 0*1.5/100, 'P')
+print(f'\nUNH:\n\t Call: {UNH_aCall.NPV():,.6f}\n\t Put: {UNH_aPut.NPV():,.6f}')
 
 
 
