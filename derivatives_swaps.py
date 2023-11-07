@@ -59,7 +59,7 @@ Lets create a swap table info
 swap_info = swap_fxd_flt()
 print(swap_info)
 
-# Now lets add the floating rates
+# Now lets assume we have the following fwd rates as the swap's floating rates
 df_SOFR3M = np.array([0.022, 0.026, 0.028, 0.031, 0.033, 0.034, 0.036, 0.038])
 swap_info['FloatRate'] = df_SOFR3M
 
@@ -82,16 +82,19 @@ plt.tight_layout(); plt.show()
 """
 Lets add discount factors for computing the swap's NPV
 """
-# Lets assume we have the following zero curve
+# Lets assume we have the following zero curve for OIS
 crv_Z = pd.DataFrame({'dtm': [1,30,90,180,360,520,1800],
-                      'z': [0.015, 0.01798, 0.02, 0.0218, 0.0247, 0.0299, 0.0404]})
+                      'z': [0.015, 0.01798, 0.02, 0.0218, 
+                            0.0247, 0.0299, 0.0404]})
 
 # Lets add dtm to swap info df
 valuation_date = dt.date(2022,3,7)
-swap_info['dtm'] = swap_info['AccEndDate'].apply(lambda x: (x-valuation_date).days)
+swap_info['dtm'] = swap_info['AccEndDate'].\
+    apply(lambda x: (x-valuation_date).days)
 
 # Lets interpolate corresponding zero rates and add the discount factors
-swap_info['DF'] = 1/(1+np.interp(swap_info['dtm'].to_numpy(), crv_Z['dtm'], crv_Z['z'])*swap_info['dtm']/360)
+interpol_z = np.interp(swap_info['dtm'].to_numpy(), crv_Z['dtm'], crv_Z['z'])
+swap_info['DF'] = 1/(1+interpol_z*swap_info['dtm']/360)
 
 # Swap's NPV
 print(f"Swap NPV: {(swap_info['DF']*swap_info['NetCF']).sum(): ,.3f} millions")
@@ -200,7 +203,8 @@ mkt_SOFR = pd.DataFrame({
 
 
 # QuantLib's Helper object for USDSOFR Crv Bootstrapping 
-def qlHelper_SOFR(market_data: pd.DataFrame = mkt_SOFR, discount_curve = crv_disc) -> list:
+def qlHelper_SOFR(market_data: pd.DataFrame = mkt_SOFR, 
+                  discount_curve = crv_disc) -> list:
     """
     Create object to bootstrap discount curve from USDOIS market.
 
@@ -225,8 +229,8 @@ def qlHelper_SOFR(market_data: pd.DataFrame = mkt_SOFR, discount_curve = crv_dis
     mkt_swap = market_data[['Period','Tenor','Quote']][market_data['Type'] == 'SWAP']
     
     # Settlement date
-    dt_settlement = ql.UnitedStates().advance(
-            ql.Settings.instance().evaluationDate,ql.Period('2D'))
+    dt_settlement = ql.UnitedStates(0).advance(
+            ql.Settings.instance().evaluationDate, ql.Period('2D'))
     # Valuation date
     ql_val_date = ql.Settings.instance().evaluationDate
     
@@ -238,7 +242,7 @@ def qlHelper_SOFR(market_data: pd.DataFrame = mkt_SOFR, discount_curve = crv_dis
     futures = {}
     for i in range(n_fut):
         imm = ql.IMM.nextDate(imm)
-        futures[imm] = 100 - mkt_fut.iloc[i]['Quote']/100
+        futures[imm] = 100 - mkt_fut.iloc[i]['Quote']/1
     ## Rates from Swaps markets
     n_swps = mkt_swap.shape[0]
     swaps = {}
@@ -319,7 +323,7 @@ ql.Settings.instance().evaluationDate = ql_val_date
 
 # First, we need our discount curve from the USDOIS market
 ## Get USDOIS Rates Helpers
-helpers_USDOIS = qlHelper_USDOIS()
+helpers_USDOIS = qlHelper_USDOIS() 
 ## Bootstrap the USDOIS Market Curve
 bootCrv_USDOIS = ql.PiecewiseLogLinearDiscount(0,ql.UnitedStates(0), 
                                                helpers_USDOIS, ql.Actual360())
@@ -329,7 +333,7 @@ crv_USDOIS.linkTo(bootCrv_USDOIS)
 
 # Second, we need our forward rates curve from the USDSOFR swap's market
 ## Get USDSOFR Rates Helpers
-helpers_USDSOFR = qlHelper_SOFR()
+helpers_USDSOFR = qlHelper_SOFR() # mkt_SOFR_2 = mkt_SOFR.copy()
 ## Bootstrap the USDSOFR Market Curve with OIS discounting
 bootCrv_USDSOFR = ql.PiecewiseLogLinearDiscount(0,ql.UnitedStates(0), 
                                                helpers_USDSOFR, ql.Actual360())
@@ -341,7 +345,7 @@ crv_USDSOFR.linkTo(bootCrv_USDSOFR)
 # Create swap schedules
 ql_cal = ql.UnitedStates(0)
 ql_startDate = ql.Date(8,3,2022)
-ql_mtyDate = ql.Date(8,3,2027)
+ql_mtyDate = ql.Date(8,3,2028)
 fxd_leg_tenor = ql.Period(1, ql.Years)
 flt_leg_tenor = ql.Period(1, ql.Years)
 non_workday_adj = ql.ModifiedFollowing
@@ -370,7 +374,7 @@ swap_index = ql.Sofr(crv_USDSOFR)
 
 # Create IRS object
 notional = 100e6
-fxd_rate = 0.03
+fxd_rate = 0.0295
 fxd_leg_daycount = ql.Actual360()
 flt_spread = 0
 flt_leg_daycount = ql.Actual360()
@@ -380,6 +384,47 @@ ql_swap = ql.VanillaSwap(swap_position, notional,
                          fxd_schdl, fxd_rate, fxd_leg_daycount, 
                          flt_schdl, swap_index, flt_spread, flt_leg_daycount)
 
+# Swap fixed leg cash flows
+ql_swap_cf_fxd = pd.DataFrame({
+    'accStartDate': cf.accrualStartDate().ISO(),
+    'accEndDate': cf.accrualEndDate().ISO(),
+    'accDays': cf.accrualDays(),
+    'T': cf.accrualPeriod(),
+    'Notional': cf.nominal(),
+    'FxdRate': cf.rate(),
+    'FxdPmt': cf.amount()
+    } for cf in map(ql.as_coupon, ql_swap.leg(0)))
+
+# Swap floating leg cash flows
+ql_swap_cf_flt = pd.DataFrame({
+    'accStartDate': cf.accrualStartDate().ISO(),
+    'accEndDate': cf.accrualEndDate().ISO(),
+    'accDays': cf.accrualDays(),
+    'T': cf.accrualPeriod(),
+    'Notional': cf.nominal(),
+    'FltRate': cf.rate(),
+    'FltPmt': cf.amount()
+    } for cf in map(ql.as_coupon, ql_swap.leg(1)))
+
+
+# Swap cash flow details
+df_swap_des = ql_swap_cf_fxd.merge(ql_swap_cf_flt[['accEndDate','FltRate','FltPmt']], 
+                                   how='outer',
+                                   left_on='accEndDate', right_on='accEndDate', 
+                                   suffixes=('_Fxd', '_Flt'))
+print(df_swap_des)
+
+# Swap Net CF
+df_swap_des['NetCF'] = df_swap_des['FxdPmt'] - df_swap_des['FltPmt']
+
+# Swap discounting factors
+tmp_DF = []
+for i,r in df_swap_des.iterrows():
+    tmp_qlDt = ql.DateParser.parseFormatted(r['accEndDate'], '%Y-%m-%d')
+    df = crv_USDOIS.discount(tmp_qlDt)
+    tmp_DF.append(df)
+df_swap_des['DF'] = tmp_DF
+print(df_swap_des)
 
 """
 Lets price our previous swap
@@ -389,5 +434,14 @@ swap_pricing_eng = ql.DiscountingSwapEngine(crv_USDOIS)
 
 # Swap pricing...
 ql_swap.setPricingEngine(swap_pricing_eng)
-ql_swap.NPV()
-ql_swap.fairRate()
+
+print(f'\nUSDSOFR 6Y Receiver Swap at {fxd_rate:.3%}')
+print(f'\tNPV: {ql_swap.NPV():,.2f}')
+print(f'\tSwap Rate: {ql_swap.fairRate():.3%}')
+
+
+
+
+
+
+# Swap
