@@ -3,8 +3,6 @@ import numpy as np
 import pandas as pd
 import QuantLib as ql
 from matplotlib import pyplot as plt
-from scipy.optimize import minimize
-
 import matplotlib.dates as mdates
 from matplotlib.ticker import StrMethodFormatter
 
@@ -165,12 +163,12 @@ print(f'Carry with {0.1070:.4%} funding rate: ${zcb_carry(zcb_fv, zcb_y, zcb_dtm
 print(f'Carry with {0.1075:.4%} funding rate: ${zcb_carry(zcb_fv, zcb_y, zcb_dtm, 360, 30, 0.1075):.8f}')
 print(f'Carry with {0.107462:.4%} funding rate: ${zcb_carry(zcb_fv, zcb_y, zcb_dtm, 360, 30, 0.107462):.8f}')
 
-print('\n 1M Carry from funding a 6M-ZCB: '+\
-      f'${zcb_carry(zcb_fv, zcb_y, zcb_dtm, 360, 30, 0.107):,.4f}')
-
 # Solving for breakeven funding rate
 max_funding_rate = (zcb_px_5m/zcb_px_6m-1)*360/30
 print(f'Funding Rate BE for 1M of previous 6M-ZCB: {max_funding_rate:,.6%}')
+
+# For homework. Function to compute the BE Rate for funding ZCB...
+# PROJECT IDEA: CARRY TRADES FOR MBONOS
 
 
 #%% FIXED INCOME YC ROLL STRATS
@@ -270,6 +268,41 @@ def qlHelper_TIIE(market_data: pd.DataFrame = mkt_TIIE) -> list:
     
     return(helpers)
 
+# Function to get cashflows from Ql Swap
+def get_cashflows(ql_swap_tiie: ql.VanillaSwap) -> pd.DataFrame:
+    # Swap fixed leg cash flows
+    ql_swap_cf_fxd = pd.DataFrame({
+        'accStartDate': cf.accrualStartDate().ISO(),
+        'accEndDate': cf.accrualEndDate().ISO(),
+        'accDays': cf.accrualDays(),
+        'T': cf.accrualPeriod(),
+        'Notional': cf.nominal(),
+        'FxdRate': cf.rate(),
+        'FxdPmt': cf.amount()
+        } for cf in map(ql.as_coupon, ql_swap_tiie.leg(0)))
+
+    # Swap floating leg cash flows
+    ql_swap_cf_flt = pd.DataFrame({
+        'accStartDate': cf.accrualStartDate().ISO(),
+        'accEndDate': cf.accrualEndDate().ISO(),
+        'accDays': cf.accrualDays(),
+        'T': cf.accrualPeriod(),
+        'Notional': cf.nominal(),
+        'FltRate': cf.rate(),
+        'FltPmt': cf.amount()
+        } for cf in map(ql.as_coupon, ql_swap_tiie.leg(1)))
+
+    # Swap cash flow details
+    df_swap_des = ql_swap_cf_fxd.merge(ql_swap_cf_flt[['accEndDate','FltRate','FltPmt']], 
+                                       how='outer',
+                                       left_on='accEndDate', right_on='accEndDate', 
+                                       suffixes=('_Fxd', '_Flt'))
+
+    # Swap Net CF
+    df_swap_des['NetCF'] = df_swap_des['FxdPmt'] - df_swap_des['FltPmt']
+    
+    return df_swap_des
+
 """
 Lets compute the carry (roll) for 1y1y TIIE swap
 """
@@ -353,7 +386,7 @@ T1y1y_p0 = ql_swap_tiie.fairRate()
 T1y1y_npv0 =  ql_swap_tiie.NPV()
 
 # 12m1Y TIIE Swap Rate
-ql_val_date = ql.Date(8,11,2023) + ql.Period(4,ql.Weeks)
+ql_val_date = ql.Date(7,11,2023) + ql.Period(4,ql.Weeks)
 ql.Settings.instance().evaluationDate = ql_val_date
 T1y1y_p1 = ql_swap_tiie.fairRate()
 T1y1y_npv1 = ql_swap_tiie.NPV()
@@ -368,17 +401,72 @@ print(f'1y1y TIIE 28D NPV Carry(roll): ${(T1y1y_npv1-T1y1y_npv0):,.0f}')
 
 #%% FIXED INCOME CURVE STRATS
 
-# Lets assume that the yield curve is going to flatten
+# Set pricing date
+ql_val_date = ql.Date(7,11,2023)
+ql.Settings.instance().evaluationDate = ql_val_date
+
+# We set a 2s3s steepener trade
+ql_schdl_26m = ql.Schedule(ql.Date(8,11,2023), 
+                           ql.Date(8,11,2023) + ql.Period(4*26,ql.Weeks), 
+                           fxd_leg_tenor, ql_cal, non_workday_adj, mtyDate_adj,
+                           dates_gen_rule, eom_adj)
+ql_schdl_39m = ql.Schedule(ql.Date(8,11,2023), 
+                           ql.Date(8,11,2023) + ql.Period(4*39,ql.Weeks), 
+                           fxd_leg_tenor, ql_cal, non_workday_adj, mtyDate_adj,
+                           dates_gen_rule, eom_adj)
+## tiie index
+ibor_tiie = ql.IborIndex('TIIE', ql.Period(ql.EveryFourthWeek), 1, 
+                         ql.MXNCurrency(), ql.Mexico(), non_workday_adj, False,
+                         ql.Actual360(), crv_TIIE)
+
+## 2s3s steepnr at -56bp
+ql_26m_rec = ql.VanillaSwap(-1, 968.004e6, ql_schdl_26m, 0.1035, fxd_leg_daycount, 
+                            ql_schdl_26m, ibor_tiie, flt_spread, flt_leg_daycount)
+ql_39m_pay = ql.VanillaSwap(1, 675.04e6, ql_schdl_39m, 0.0979, fxd_leg_daycount, 
+                            ql_schdl_39m, ibor_tiie, flt_spread, flt_leg_daycount)
+swap_pricing_eng = ql.DiscountingSwapEngine(crv_TIIE)
+ql_26m_rec.setPricingEngine(swap_pricing_eng)
+ql_39m_pay.setPricingEngine(swap_pricing_eng)
+
+## Check dv01 neutral
+ql_26m_rec.legBPS(0) + ql_39m_pay.legBPS(0)
+
+# Strategy Portfolio
+pfolio_strat = [ql_26m_rec, ql_39m_pay]
+
+# Pfolio Starting NPV
+pfolio_strat_npv0 = np.sum(np.array([x.NPV() for x in pfolio_strat]))
+print(f'Strategy NPV as of {ql_val_date}:\n\t2y: {ql_26m_rec.NPV():,.0f}\n\t3y: {ql_39m_pay.NPV():,.0f}')
+print(f'\t2s3s: {pfolio_strat_npv0:,.0f}')
+
+# Pfolio Expected CF
+ql_26m_cf, ql_39m_cf = get_cashflows(ql_26m_rec), get_cashflows(ql_39m_pay)
+pfolio_CF = ql_39m_cf[['accStartDate', 'accEndDate']].copy()
+pfolio_CF['NetCF'] = ql_26m_cf['NetCF']+ql_39m_cf['NetCF']*-1
+pfolio_CF['NetCF'].iloc[26:] = ql_39m_cf['NetCF'].iloc[26:]*-1
+print(pfolio_CF.iloc[:3])
+
+# Lets plot net cash flows
+fig, ax = plt.subplots(figsize=(10,5))
+ax.bar(pfolio_CF['accEndDate'].apply(pd.to_datetime), pfolio_CF['NetCF'], width = 10)
+ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=(0,3,6,9,12)))
+ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %y'))
+plt.title('TIIE 2s3s Net Payments',size=16)
+ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'))
+plt.tight_layout(); plt.show()
+
+# Lets assume that the yield curve is going to steepen
 mkt_TIIE_delta = np.repeat(np.array([600,585,564,525,380,300,200,115,80,75,50]), 
-                           np.array([2,1,1,1,1,1,1,1,1,1,3]))/100
+                           np.array([2,1,1,1,1,1,1,1,1,1,3]))/600
 mkt_TIIE_shift = mkt_TIIE.copy()
 mkt_TIIE_shift['Quote'] -= mkt_TIIE_delta
+
 # Lets plot YC shift
 fig, ax = plt.subplots(figsize=(9,5))
 ax.plot(mkt_TIIE['Period'], mkt_TIIE['Quote'], 
-        color = 'b', marker='o', label=f'{ql.Date(8,11,2023)}')
+        color = 'b', marker='o', label=f'{ql.Date(7,11,2023)}')
 ax.plot(mkt_TIIE['Period'], mkt_TIIE_shift['Quote'], 
-        color = 'orange', marker='o', label=f'{ql.Date(8,11,2023) + ql.Period(4,ql.Weeks)}')
+        color = 'orange', marker='o', label=f'{ql.Date(7,11,2023) + ql.Period(4,ql.Weeks)}')
 plt.title('TIIE Swaps Market', size=17)
 ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
 plt.legend()
@@ -391,35 +479,58 @@ crv_TIIE_shift.linkTo(
                                         qlHelper_TIIE(market_data=mkt_TIIE_shift) , 
                                         ql.Actual360()))
 
-# Set TIIE pricing engine
-ibor_tiie = ql.IborIndex('TIIE', 
-                         ql.Period(ql.EveryFourthWeek),
-                         1,
-                         ql.MXNCurrency(), 
-                         ql.Mexico(), 
-                         non_workday_adj,
-                         False,
-                         ql.Actual360(), 
-                         crv_TIIE_shift)
-ql_swap_tiie = ql.VanillaSwap(swap_position, 
-                              notional, 
-                              fxd_schdl, 
-                              fxd_rate, 
-                              fxd_leg_daycount, 
-                              flt_schdl, 
-                              ibor_tiie, 
-                              flt_spread, 
-                              flt_leg_daycount)
+# Pfolio after market steepnd 
+ibor_tiie_shift = ql.IborIndex('TIIE', ql.Period(ql.EveryFourthWeek), 1,
+                         ql.MXNCurrency(), ql.Mexico(), non_workday_adj, False,
+                         ql.Actual360(), crv_TIIE_shift)
+ibor_tiie_shift.addFixings([ql.Date(7,11,2023), ql.Date(5,12,2023)], 
+                          [crv_TIIE_shift.forwardRate(ql.Date(8,11,2023), 
+                                                     ql.Date(6,12,2023), 
+                                                     fxd_leg_daycount, 
+                                                     ql.Simple).rate(),
+                           crv_TIIE_shift.forwardRate(ql.Date(6,12,2023), 
+                                                      ql.Date(3,1,2024), 
+                                                      fxd_leg_daycount, 
+                                                      ql.Simple).rate()])
+ql_26m_rec = ql.VanillaSwap(-1, 968.004e6, ql_schdl_26m, 0.1035, fxd_leg_daycount, 
+                            ql_schdl_26m, ibor_tiie_shift, flt_spread, flt_leg_daycount)
+ql_39m_pay = ql.VanillaSwap(1, 675.04e6, ql_schdl_39m, 0.0979, fxd_leg_daycount, 
+                            ql_schdl_39m, ibor_tiie_shift, flt_spread, flt_leg_daycount)
 swap_pricing_eng = ql.DiscountingSwapEngine(crv_TIIE_shift)
-ql_swap_tiie.setPricingEngine(swap_pricing_eng)
+ql_26m_rec.setPricingEngine(swap_pricing_eng)
+ql_39m_pay.setPricingEngine(swap_pricing_eng)
+pfolio_strat = [ql_26m_rec, ql_39m_pay]
 
-# 1Y1Y TIIE prices
-T1y1y_p_shift = ql_swap_tiie.fairRate()
-T1y1y_npv_shift =  ql_swap_tiie.NPV()
+# If the steepenning move is instantaneous
+pfolio_strat_npv1 = np.sum(np.array([x.NPV() for x in pfolio_strat]))
+print('Market Steepened Instantaneously')
+print(f'Strategy NPV as of {ql_val_date}:\n\t2y: {ql_26m_rec.NPV():,.0f}\n\t3y: {ql_39m_pay.NPV():,.0f}')
+print(f'\t2s3s: {pfolio_strat_npv1:,.0f}')
 
-print(f'1y1y TIIE Swap Rate After Shift: {T1y1y_p_shift:.4%}')
+# If the steepenning move is after 28D
+ql.Settings.instance().evaluationDate = ql.Date(7,11,2023) + ql.Period(4*1,ql.Weeks)
+pfolio_strat_npv1 = np.sum(np.array([x.NPV() for x in pfolio_strat]))
+print('Market Steepened 1L Later')
+print(f'Strategy NPV as of {ql.Settings.instance().evaluationDate}:\n\t2y: {ql_26m_rec.NPV():,.0f}\n\t3y: {ql_39m_pay.NPV():,.0f}')
+print(f'\t2s3s: {pfolio_strat_npv1:,.0f}')
 
+# Pfolio Expected CF
+ql_26m_cf, ql_39m_cf = get_cashflows(ql_26m_rec), get_cashflows(ql_39m_pay)
+pfolio_CF = ql_39m_cf[['accStartDate', 'accEndDate']].copy()
+pfolio_CF['NetCF'] = ql_26m_cf['NetCF']+ql_39m_cf['NetCF']*-1
+pfolio_CF['NetCF'].iloc[26:] = ql_39m_cf['NetCF'].iloc[26:]*-1
+print(pfolio_CF.iloc[:3])
 
+# Lets plot net cash flows
+fig, ax = plt.subplots(figsize=(10,5))
+ax.bar(pfolio_CF['accEndDate'].apply(pd.to_datetime), pfolio_CF['NetCF'], width = 10)
+ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=(0,3,6,9,12)))
+ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %y'))
+plt.title('TIIE 2s3s Net Payments',size=16)
+ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'))
+plt.tight_layout(); plt.show()
 
+# 2s3s spread t0, t1
+mkt_TIIE['Quote'].iloc[5:7].diff().dropna().values*100, mkt_TIIE_shift['Quote'].iloc[5:7].diff().dropna().values*100
 
 
