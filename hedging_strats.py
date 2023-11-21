@@ -71,6 +71,7 @@ tmp_df_d.plot()
 from pandas_datareader import data as pdr
 yf.pdr_override()
 
+
 """
 Lets compute a cross hedge for jet fuel with heating oil futures
 """
@@ -119,8 +120,10 @@ data = pdr.get_data_yahoo(["ES=F","MSFT"],
 data = data.fillna(method='ffill')
 train_data, test_data = data['2019':'2023-06'], data['2023-06-30':'2023-09']
 
+train_data['2023-01-01':'2023-06']['Adj Close']['MSFT'].plot()
+
 # Correlation between our pfolio and the hedging instrument
-rho = train_data['Adj Close'].diff().corr('spearman').iloc[0,1]
+rho = train_data['Adj Close'].apply(np.log).diff().corr().iloc[0,1]
 
 # Pfolio and hedging instrument volatilities
 sigma_F = train_data['Adj Close']['ES=F'].apply(np.log).diff().std()
@@ -138,14 +141,74 @@ Nstar = np.floor(hstar*Q_S/Q_F)
 test_pfolio = test_data['Adj Close']['MSFT']*2e3
 test_hedge = test_data['Adj Close']['ES=F']*50*Nstar
 df_test = pd.concat([test_hedge, test_pfolio], axis=1)
-df_test.plot()
+(100*df_test/df_test.iloc[0]).plot(title='Pfolio & Future Performance')
 
 # Pfolio changes with hedge
 df_pfolio_hedge = df_test.diff().fillna(0)['MSFT'] - df_test.diff().fillna(0)['ES=F']
 pd.DataFrame({
     'No Hedge': df_test.diff().fillna(0)['MSFT'].cumsum(), 
     'Hedge': df_pfolio_hedge.cumsum()
-           }).plot()
+           }).plot(title='Equity Curve')
+
+# PROJECT IDEA: 
+## Improve hedge dynamics with CAPM; change hedge ratio for market beta
+
+
+"""
+Lets compute the cross hedge for a portfolio of swaps
+"""
+# Data
+fidata = pd.DataFrame({
+    'TIIE2Y': [10.6900,10.7650,10.5900,10.5850,10.5350,10.5300,10.4350,10.4850,
+               10.5850,10.5900,10.6350,10.7050,10.7400,10.7350,10.6700,10.6700,
+               10.6900,10.7700,10.6450,10.6050,10.6550],
+    'US2Y': [5.1041, 5.1502, 5.0518, 5.0183, 5.0813, 5.0813, 4.9696, 4.9821, 
+             5.0687, 5.0538, 5.0985, 5.2095, 5.2225, 5.1585, 5.0731, 5.0474, 
+             5.1119, 5.1206, 5.0395, 5.0021, 5.0540],
+    'TU1': [101.222656, 101.152344, 101.343750, 101.390625, 101.277344, 
+            101.542969, 101.468750, 101.421875, 101.300781, 101.332031,
+            101.246094, 101.023438, 101.015625, 101.105469, 101.265625,
+            101.312500, 101.226563, 101.140625, 101.285156, 101.332031,
+            101.277344]
+    }, index = np.arange(1,22,1))
+
+# Data for hedging parameters
+fidata_train, fidata_test = fidata.iloc[:16], fidata.iloc[15:]
+
+# Plotting what we know and one expected path
+fidata_train.diff()[['TIIE2Y', 'US2Y']].plot()
+fidata_test.diff()[['TIIE2Y', 'US2Y']].plot()
+
+# Data changes
+sigma_TIIE, sigma_TU1 = fidata_train.diff().std()[['TIIE2Y', 'TU1']]
+# Correlation between tiie and hedge
+rho_fi = fidata_train.diff().corr()['TIIE2Y']['TU1']
+
+# Hedge ratio
+hstar = rho_fi*100*sigma_TIIE/sigma_TU1
+
+# Optimal TU Contract Size
+Q_TIIE = 5000
+Q_TU1 = 32*62.5
+Nstar = np.floor(hstar*Q_TIIE/Q_TU1)
+
+# Hedge dynamics
+fidata_test_dynamics = pd.concat([
+    fidata_test.diff()[['TIIE2Y']].fillna(0)*-5000*100,
+    fidata_test.diff()[['TU1']].fillna(0)*2000*Nstar], axis=1)
+fidata_test_dynamics['Hedge'] = fidata_test_dynamics['TIIE2Y'] + fidata_test_dynamics['TU1']
+fidata_test_dynamics[['TIIE2Y', 'Hedge']].plot(title='Equity Curve')
+
+# Alternative hedge ratio with DV01
+dv01_TU1 = -0.69*62.5
+Nstar = np.floor(Q_TIIE/dv01_TU1)
+# Hedge dynamics
+fidata_test_dynamics = pd.concat([
+    fidata_test.diff()[['TIIE2Y']].fillna(0)*-5000*100,
+    fidata_test.diff()[['TU1']].fillna(0)*2000*Nstar], axis=1)
+fidata_test_dynamics['Hedge'] = fidata_test_dynamics['TIIE2Y'] + fidata_test_dynamics['TU1']
+fidata_test_dynamics[['TIIE2Y', 'Hedge']].plot(title='Equity Curve')
+
 
 
 #%% FIXED INCOME HEDGING
@@ -281,7 +344,7 @@ def get_cashflows(ql_swap_tiie: ql.VanillaSwap) -> pd.DataFrame:
     return df_swap_des
 
 """
-Lets compute the carry (roll) for 1y1y TIIE swap
+Lets compute bucket risk for a 1y1y TIIE swap
 """
 # Set valuation date
 ql_val_date = ql.Date(7,11,2023)
@@ -309,7 +372,7 @@ non_workday_adj = ql.Following
 mtyDate_adj = ql.Following
 dates_gen_rule = ql.DateGeneration.Backward
 eom_adj = False
-fxd_schdl = ql.Schedule(ql_startDate, 
+schdl_1y1y = ql.Schedule(ql_startDate, 
                         ql_mtyDate, 
                         fxd_leg_tenor, 
                         ql_cal, 
@@ -317,25 +380,17 @@ fxd_schdl = ql.Schedule(ql_startDate,
                         mtyDate_adj,
                         dates_gen_rule, 
                         eom_adj)
-flt_schdl = ql.Schedule(ql_startDate, 
-                        ql_mtyDate, 
-                        flt_leg_tenor, 
-                        ql_cal, 
-                        non_workday_adj, 
-                        mtyDate_adj,
-                        dates_gen_rule, 
-                        eom_adj)
 
 # Create TIIE swap floating rate index
-ibor_tiie = ql.IborIndex('TIIE', # name
-                         ql.Period(ql.EveryFourthWeek), # tenor
-                         1, # settlement days
-                         ql.MXNCurrency(), # currency
-                         ql.Mexico(), # fixing calendar
-                         non_workday_adj, # convention
-                         False, # endOfMonth
-                         ql.Actual360(), # dayCounter
-                         crv_TIIE) # handle YieldTermStructure
+ibor_tiie = ql.IborIndex('TIIE', 
+                         ql.Period(ql.EveryFourthWeek), 
+                         1, 
+                         ql.MXNCurrency(), 
+                         ql.Mexico(), 
+                         non_workday_adj, 
+                         False,
+                         ql.Actual360(), 
+                         crv_TIIE) 
 
 # Create TIIE IRS object
 notional = 2e9
@@ -347,10 +402,10 @@ swap_position = ql.VanillaSwap.Receiver
 ## TIIE IRS
 ql_swap_tiie = ql.VanillaSwap(swap_position, 
                               notional, 
-                              fxd_schdl, 
+                              schdl_1y1y, 
                               fxd_rate, 
                               fxd_leg_daycount, 
-                              flt_schdl, 
+                              schdl_1y1y, 
                               ibor_tiie, 
                               flt_spread, 
                               flt_leg_daycount)
@@ -358,156 +413,260 @@ ql_swap_tiie = ql.VanillaSwap(swap_position,
 swap_pricing_eng = ql.DiscountingSwapEngine(crv_TIIE)
 ql_swap_tiie.setPricingEngine(swap_pricing_eng)
 
-# 1Y1Y TIIE prices
+# 1Y1Y TIIE
 T1y1y_p0 = ql_swap_tiie.fairRate()
 T1y1y_npv0 =  ql_swap_tiie.NPV()
+T1y1y_dv01 = ql_swap_tiie.legBPS(0)*ql_swap_tiie.type()
+print(f'\n1y1y TIIE \n\tSwap Rate: {T1y1y_p0:.4%}')
+print(f'\tNPV: {T1y1y_npv0:,.0f}')
+print(f'\tOutright DV01: {T1y1y_dv01:,.0f}')
 
-# 12m1Y TIIE Swap Rate
-ql_val_date = ql.Date(7,11,2023) + ql.Period(4,ql.Weeks)
-ql.Settings.instance().evaluationDate = ql_val_date
-T1y1y_p1 = ql_swap_tiie.fairRate()
-T1y1y_npv1 = ql_swap_tiie.NPV()
 
-print(f'\n1y1y TIIE Swap Rate: {T1y1y_p0:.4%}')
-print(f'12m1Y TIIE Swap Rate: {T1y1y_p1:.4%}')
-print(f'1y1y TIIE 28D Carry(roll): {1e4*(T1y1y_p0-T1y1y_p1):.1f} bp')
-
-print(f'\n1y1y TIIE NPV: {T1y1y_npv0:,.0f}')
-print(f'12m1Y TIIE NPV: {T1y1y_npv1:,.0f}')
-print(f'1y1y TIIE 28D NPV Carry(roll): ${(T1y1y_npv1-T1y1y_npv0):,.0f}')
-
-#%% FIXED INCOME CURVE STRATS
-
-# Set pricing date
-ql_val_date = ql.Date(7,11,2023)
-ql.Settings.instance().evaluationDate = ql_val_date
-
-# We set a 2s3s steepener trade
-ql_schdl_26m = ql.Schedule(ql.Date(8,11,2023), 
-                           ql.Date(8,11,2023) + ql.Period(4*26,ql.Weeks), 
-                           fxd_leg_tenor, ql_cal, non_workday_adj, mtyDate_adj,
-                           dates_gen_rule, eom_adj)
-ql_schdl_39m = ql.Schedule(ql.Date(8,11,2023), 
-                           ql.Date(8,11,2023) + ql.Period(4*39,ql.Weeks), 
-                           fxd_leg_tenor, ql_cal, non_workday_adj, mtyDate_adj,
-                           dates_gen_rule, eom_adj)
-## tiie index
-ibor_tiie = ql.IborIndex('TIIE', ql.Period(ql.EveryFourthWeek), 1, 
-                         ql.MXNCurrency(), ql.Mexico(), non_workday_adj, False,
-                         ql.Actual360(), crv_TIIE)
-
-## 2s3s steepnr at -56bp
-ql_26m_rec = ql.VanillaSwap(-1, 968.004e6, ql_schdl_26m, 0.1035, fxd_leg_daycount, 
-                            ql_schdl_26m, ibor_tiie, flt_spread, flt_leg_daycount)
-ql_39m_pay = ql.VanillaSwap(1, 675.04e6, ql_schdl_39m, 0.0979, fxd_leg_daycount, 
-                            ql_schdl_39m, ibor_tiie, flt_spread, flt_leg_daycount)
+"""
+Lets hedge our pfolio of swaps by outright risk
+"""
+# Assume we hedge with the 1y tenor
+hedge_pos = ql.VanillaSwap.Payer
+hedge_fv = 1.75e9
+schdl_1y = ql.Schedule(ql_cal.advance(ql_val_date,ql.Period(1,ql.Days)), 
+                       ql_cal.advance(ql_val_date,ql.Period(1,ql.Days))+ql.Period(4*13,ql.Weeks), 
+                       fxd_leg_tenor, ql_cal, non_workday_adj, mtyDate_adj, dates_gen_rule, eom_adj)
+ql_swap_hedge_1y = ql.VanillaSwap(hedge_pos, hedge_fv, schdl_1y, 0.1125, fxd_leg_daycount, schdl_1y, 
+                              ibor_tiie, flt_spread, flt_leg_daycount)
 swap_pricing_eng = ql.DiscountingSwapEngine(crv_TIIE)
-ql_26m_rec.setPricingEngine(swap_pricing_eng)
-ql_39m_pay.setPricingEngine(swap_pricing_eng)
+ql_swap_hedge_1y.setPricingEngine(swap_pricing_eng)
+hedge_1y_npv0 = ql_swap_hedge_1y.NPV()
 
-## Check dv01 neutral
-ql_26m_rec.legBPS(0) + ql_39m_pay.legBPS(0)
-
-# Strategy Portfolio
-pfolio_strat = [ql_26m_rec, ql_39m_pay]
-
-# Pfolio Starting NPV
-pfolio_strat_npv0 = np.sum(np.array([x.NPV() for x in pfolio_strat]))
-print(f'Strategy NPV as of {ql_val_date}:\n\t2y: {ql_26m_rec.NPV():,.0f}\n\t3y: {ql_39m_pay.NPV():,.0f}')
-print(f'\t2s3s: {pfolio_strat_npv0:,.0f}')
-
-# Pfolio Expected CF
-ql_26m_cf, ql_39m_cf = get_cashflows(ql_26m_rec), get_cashflows(ql_39m_pay)
-pfolio_CF = ql_39m_cf[['accStartDate', 'accEndDate']].copy()
-pfolio_CF['NetCF'] = ql_26m_cf['NetCF']+ql_39m_cf['NetCF']*-1
-pfolio_CF['NetCF'].iloc[26:] = ql_39m_cf['NetCF'].iloc[26:]*-1
-print(pfolio_CF.iloc[:3])
-
-# Lets plot net cash flows
-fig, ax = plt.subplots(figsize=(10,5))
-ax.bar(pfolio_CF['accEndDate'].apply(pd.to_datetime), pfolio_CF['NetCF'], width = 10)
-ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=(0,3,6,9,12)))
-ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %y'))
-plt.title('TIIE 2s3s Net Payments',size=16)
-ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'))
-plt.tight_layout(); plt.show()
-
-# Lets assume that the yield curve is going to steepen
-mkt_TIIE_delta = np.repeat(np.array([600,585,564,525,380,300,200,115,80,75,50]), 
-                           np.array([2,1,1,1,1,1,1,1,1,1,3]))/600
+# Lets see what happens with parallel shifts
 mkt_TIIE_shift = mkt_TIIE.copy()
-mkt_TIIE_shift['Quote'] -= mkt_TIIE_delta
+mkt_TIIE_shift['Quote'] += 20/100
 
-# Lets plot YC shift
-fig, ax = plt.subplots(figsize=(9,5))
-ax.plot(mkt_TIIE['Period'], mkt_TIIE['Quote'], 
-        color = 'b', marker='o', label=f'{ql.Date(7,11,2023)}')
-ax.plot(mkt_TIIE['Period'], mkt_TIIE_shift['Quote'], 
-        color = 'orange', marker='o', label=f'{ql.Date(7,11,2023) + ql.Period(4,ql.Weeks)}')
-plt.title('TIIE Swaps Market', size=17)
-ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.2f}'))
-plt.legend()
-plt.tight_layout(); plt.show()
-
-# Set the shifted curve for pricing
 crv_TIIE_shift = ql.RelinkableYieldTermStructureHandle()
 crv_TIIE_shift.linkTo(
     ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(0), 
                                         qlHelper_TIIE(market_data=mkt_TIIE_shift) , 
                                         ql.Actual360()))
 
-# Pfolio after market steepnd 
 ibor_tiie_shift = ql.IborIndex('TIIE', ql.Period(ql.EveryFourthWeek), 1,
                          ql.MXNCurrency(), ql.Mexico(), non_workday_adj, False,
                          ql.Actual360(), crv_TIIE_shift)
-ibor_tiie_shift.addFixings([ql.Date(7,11,2023), ql.Date(5,12,2023)], 
-                          [crv_TIIE_shift.forwardRate(ql.Date(8,11,2023), 
-                                                     ql.Date(6,12,2023), 
-                                                     fxd_leg_daycount, 
-                                                     ql.Simple).rate(),
-                           crv_TIIE_shift.forwardRate(ql.Date(6,12,2023), 
-                                                      ql.Date(3,1,2024), 
-                                                      fxd_leg_daycount, 
-                                                      ql.Simple).rate()])
-ql_26m_rec = ql.VanillaSwap(-1, 968.004e6, ql_schdl_26m, 0.1035, fxd_leg_daycount, 
-                            ql_schdl_26m, ibor_tiie_shift, flt_spread, flt_leg_daycount)
-ql_39m_pay = ql.VanillaSwap(1, 675.04e6, ql_schdl_39m, 0.0979, fxd_leg_daycount, 
-                            ql_schdl_39m, ibor_tiie_shift, flt_spread, flt_leg_daycount)
+
+ql_swap_tiie = ql.VanillaSwap(swap_position, notional, schdl_1y1y, fxd_rate, 
+                              fxd_leg_daycount, schdl_1y1y, ibor_tiie_shift, 
+                              flt_spread, flt_leg_daycount)
+ql_swap_hedge_1y = ql.VanillaSwap(hedge_pos, hedge_fv, schdl_1y, 0.1125, 
+                                  fxd_leg_daycount, schdl_1y, ibor_tiie_shift, 
+                                  flt_spread, flt_leg_daycount)
 swap_pricing_eng = ql.DiscountingSwapEngine(crv_TIIE_shift)
-ql_26m_rec.setPricingEngine(swap_pricing_eng)
-ql_39m_pay.setPricingEngine(swap_pricing_eng)
-pfolio_strat = [ql_26m_rec, ql_39m_pay]
+ql_swap_tiie.setPricingEngine(swap_pricing_eng)
+ql_swap_hedge_1y.setPricingEngine(swap_pricing_eng)
 
-# If the steepenning move is instantaneous
-pfolio_strat_npv1 = np.sum(np.array([x.NPV() for x in pfolio_strat]))
-print('Market Steepened Instantaneously')
-print(f'Strategy NPV as of {ql_val_date}:\n\t2y: {ql_26m_rec.NPV():,.0f}\n\t3y: {ql_39m_pay.NPV():,.0f}')
-print(f'\t2s3s: {pfolio_strat_npv1:,.0f}')
+npv_shift_1y1y = ql_swap_tiie.NPV()
+npv_shift_hedge_1y = ql_swap_hedge_1y.NPV()
 
-# If the steepenning move is after 28D
-ql.Settings.instance().evaluationDate = ql.Date(7,11,2023) + ql.Period(4*1,ql.Weeks)
-pfolio_strat_npv1 = np.sum(np.array([x.NPV() for x in pfolio_strat]))
-print('Market Steepened 1L Later')
-print(f'Strategy NPV as of {ql.Settings.instance().evaluationDate}:\n\t2y: {ql_26m_rec.NPV():,.0f}\n\t3y: {ql_39m_pay.NPV():,.0f}')
-print(f'\t2s3s: {pfolio_strat_npv1:,.0f}')
+print('NPV Change Afer Market Sold Off:'+\
+      f'\n\tNo Hedge: {npv_shift_1y1y-T1y1y_npv0: ,.0f}'+\
+      f'\n\tHedge: {npv_shift_1y1y-T1y1y_npv0 + npv_shift_hedge_1y-hedge_1y_npv0:,.0f}')
+    
+# Lets see what happens with slope shifts
+mkt_TIIE_shift = mkt_TIIE.copy()
+mkt_TIIE_shift.loc[:4,'Quote'] += 20/100
+mkt_TIIE_shift.loc[5:,'Quote'] += 30/100
+rv_TIIE_shift = ql.RelinkableYieldTermStructureHandle()
+crv_TIIE_shift.linkTo(
+    ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(0), 
+                                        qlHelper_TIIE(market_data=mkt_TIIE_shift) , 
+                                        ql.Actual360()))
 
-# Pfolio Expected CF
-ql_26m_cf, ql_39m_cf = get_cashflows(ql_26m_rec), get_cashflows(ql_39m_pay)
-pfolio_CF = ql_39m_cf[['accStartDate', 'accEndDate']].copy()
-pfolio_CF['NetCF'] = ql_26m_cf['NetCF']+ql_39m_cf['NetCF']*-1
-pfolio_CF['NetCF'].iloc[26:] = ql_39m_cf['NetCF'].iloc[26:]*-1
-print(pfolio_CF.iloc[:3])
+ibor_tiie_shift = ql.IborIndex('TIIE', ql.Period(ql.EveryFourthWeek), 1,
+                         ql.MXNCurrency(), ql.Mexico(), non_workday_adj, False,
+                         ql.Actual360(), crv_TIIE_shift)
 
-# Lets plot net cash flows
-fig, ax = plt.subplots(figsize=(10,5))
-ax.bar(pfolio_CF['accEndDate'].apply(pd.to_datetime), pfolio_CF['NetCF'], width = 10)
-ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=(0,3,6,9,12)))
-ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %y'))
-plt.title('TIIE 2s3s Net Payments',size=16)
-ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'))
-plt.tight_layout(); plt.show()
+ql_swap_tiie = ql.VanillaSwap(swap_position, notional, schdl_1y1y, fxd_rate, 
+                              fxd_leg_daycount, schdl_1y1y, ibor_tiie_shift, 
+                              flt_spread, flt_leg_daycount)
+ql_swap_hedge_1y = ql.VanillaSwap(hedge_pos, hedge_fv, schdl_1y, 0.1125, 
+                                  fxd_leg_daycount, schdl_1y, ibor_tiie_shift, 
+                                  flt_spread, flt_leg_daycount)
+swap_pricing_eng = ql.DiscountingSwapEngine(crv_TIIE_shift)
+ql_swap_tiie.setPricingEngine(swap_pricing_eng)
+ql_swap_hedge_1y.setPricingEngine(swap_pricing_eng)
 
-# 2s3s spread t0, t1
-mkt_TIIE['Quote'].iloc[5:7].diff().dropna().values*100, mkt_TIIE_shift['Quote'].iloc[5:7].diff().dropna().values*100
+npv_shift_1y1y = ql_swap_tiie.NPV()
+npv_shift_hedge_1y = ql_swap_hedge_1y.NPV()
 
+print('NPV Change Afer Market Bear Steepened:'+\
+      f'\n\tNo Hedge: {npv_shift_1y1y-T1y1y_npv0: ,.0f}'+\
+      f'\n\tHedge: {npv_shift_1y1y-T1y1y_npv0 + npv_shift_hedge_1y-hedge_1y_npv0:,.0f}')
+    
+
+"""
+Lets hedge our pfolio of swaps by bucket risk
+"""
+
+# Risk by Tradeable Tenor
+br_T1y1y = pd.DataFrame(columns=['dv01'], index=mkt_TIIE['Period'])
+for i,r in mkt_TIIE.iterrows():
+    mkt_TIIE_br = mkt_TIIE.copy()
+    mkt_TIIE_br.loc[i,'Quote'] = mkt_TIIE_br.loc[i,'Quote']+1/100
+    ## Curve with tenor shift
+    crv_TIIE_shift = ql.RelinkableYieldTermStructureHandle()
+    crv_TIIE_shift.linkTo(
+        ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(0), 
+                                            qlHelper_TIIE(market_data=mkt_TIIE_br) , 
+                                            ql.Actual360()))
+    # ibor index shifted
+    ibor_tiie_shift = ql.IborIndex('TIIE', ql.Period(ql.EveryFourthWeek), 1,
+                             ql.MXNCurrency(), ql.Mexico(), non_workday_adj, False,
+                             ql.Actual360(), crv_TIIE_shift)
+    # Swap price effect by curve shift
+    ql_swap_tiie = ql.VanillaSwap(swap_position, 
+                                  notional, 
+                                  schdl_1y1y, 
+                                  fxd_rate, 
+                                  fxd_leg_daycount, 
+                                  schdl_1y1y, 
+                                  ibor_tiie_shift, 
+                                  flt_spread, 
+                                  flt_leg_daycount)
+    swap_pricing_eng = ql.DiscountingSwapEngine(crv_TIIE_shift)
+    ql_swap_tiie.setPricingEngine(swap_pricing_eng)
+    swap_npv_chg = ql_swap_tiie.NPV() - T1y1y_npv0
+    br_T1y1y.loc[r['Period']] = swap_npv_chg
+    
+# Lets see the dv01 risk by bucket
+br_T1y1y_fmt = br_T1y1y.apply(lambda x: "{:,.0f}".format(x['dv01']), axis=1)
+print(br_T1y1y_fmt)
+
+# We need to hedge two buckets
+## 1y bucket hedge
+ql_swap_hedge_1y = ql.VanillaSwap(-1, 1.88e9, schdl_1y, 0.112425, 
+                                  fxd_leg_daycount, schdl_1y, ibor_tiie, 
+                                  flt_spread, flt_leg_daycount)
+## 2y bucket hedge
+schdl_2y = ql.Schedule(ql_cal.advance(ql_val_date,ql.Period(1,ql.Days)), 
+                       ql_cal.advance(ql_val_date,ql.Period(1,ql.Days))+ql.Period(4*26,ql.Weeks), 
+                       fxd_leg_tenor, ql_cal, non_workday_adj, mtyDate_adj, dates_gen_rule, eom_adj)
+ql_swap_hedge_2y = ql.VanillaSwap(1, 1.95e9, schdl_2y, 0.10356, 
+                                  fxd_leg_daycount, schdl_2y, ibor_tiie, 
+                                  flt_spread, flt_leg_daycount)
+swap_pricing_eng = ql.DiscountingSwapEngine(crv_TIIE)
+ql_swap_hedge_1y.setPricingEngine(swap_pricing_eng)
+ql_swap_hedge_2y.setPricingEngine(swap_pricing_eng)
+hedge_1y_npv0 = ql_swap_hedge_1y.NPV()
+hedge_2y_npv0 = ql_swap_hedge_2y.NPV()
+
+# Lets see bucket risk after hedge pfolio
+br_T1y1y_hedge = pd.DataFrame(columns=['dv01'], index=mkt_TIIE['Period'])
+for i,r in mkt_TIIE.iterrows():
+    mkt_TIIE_br = mkt_TIIE.copy()
+    mkt_TIIE_br.loc[i,'Quote'] = mkt_TIIE_br.loc[i,'Quote']+1/100
+    ## Curve with tenor shift
+    crv_TIIE_shift = ql.RelinkableYieldTermStructureHandle()
+    crv_TIIE_shift.linkTo(
+        ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(0), 
+                                            qlHelper_TIIE(market_data=mkt_TIIE_br) , 
+                                            ql.Actual360()))
+    # ibor index shifted
+    ibor_tiie_shift = ql.IborIndex('TIIE', ql.Period(ql.EveryFourthWeek), 1,
+                             ql.MXNCurrency(), ql.Mexico(), non_workday_adj, False,
+                             ql.Actual360(), crv_TIIE_shift)
+    # Swap price effect by curve shift
+    ql_tmp_tiie = ql.VanillaSwap(swap_position, notional, schdl_1y1y, fxd_rate, 
+                                  fxd_leg_daycount, schdl_1y1y, ibor_tiie_shift, 
+                                  flt_spread, flt_leg_daycount)
+    ql_tmp_tiie1y = ql.VanillaSwap(-1, 1.88e9, schdl_1y, 0.112425, 
+                                   fxd_leg_daycount, schdl_1y, ibor_tiie_shift, 
+                                   flt_spread, flt_leg_daycount)
+    ql_tmp_tiie2y = ql.VanillaSwap(1, 1.95e9, schdl_2y, 0.10356, 
+                                   fxd_leg_daycount, schdl_2y, ibor_tiie_shift, 
+                                   flt_spread, flt_leg_daycount)
+    tmp_px_eng = ql.DiscountingSwapEngine(crv_TIIE_shift)
+    ql_tmp_tiie.setPricingEngine(tmp_px_eng)
+    ql_tmp_tiie1y.setPricingEngine(tmp_px_eng)
+    ql_tmp_tiie2y.setPricingEngine(tmp_px_eng)
+    swap_npv_chg = ql_tmp_tiie.NPV() - T1y1y_npv0
+    hedge1y_npv_chg = ql_tmp_tiie1y.NPV() - hedge_1y_npv0
+    hedge2y_npv_chg = ql_tmp_tiie2y.NPV() - hedge_2y_npv0
+    br_T1y1y_hedge.loc[r['Period']] = swap_npv_chg+hedge1y_npv_chg+hedge2y_npv_chg
+
+# Lets see the dv01 risk by bucket after hedge
+br_T1y1y_hedge_fmt = br_T1y1y_hedge.apply(lambda x: "{:,.0f}".format(x['dv01']), axis=1)
+print(pd.concat([br_T1y1y_fmt, br_T1y1y_hedge_fmt],axis=1))
+
+
+# Lets see what happens with parallel shifts
+mkt_TIIE_shift = mkt_TIIE.copy()
+mkt_TIIE_shift['Quote'] += 20/100
+
+crv_TIIE_shift = ql.RelinkableYieldTermStructureHandle()
+crv_TIIE_shift.linkTo(
+    ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(0), 
+                                        qlHelper_TIIE(market_data=mkt_TIIE_shift) , 
+                                        ql.Actual360()))
+
+ibor_tiie_shift = ql.IborIndex('TIIE', ql.Period(ql.EveryFourthWeek), 1,
+                         ql.MXNCurrency(), ql.Mexico(), non_workday_adj, False,
+                         ql.Actual360(), crv_TIIE_shift)
+
+ql_swap_tiie = ql.VanillaSwap(swap_position, notional, schdl_1y1y, fxd_rate, 
+                              fxd_leg_daycount, schdl_1y1y, ibor_tiie_shift, 
+                              flt_spread, flt_leg_daycount)
+ql_swap_hedge_1y = ql.VanillaSwap(-1, 1.88e9, schdl_1y, 0.112425, 
+                               fxd_leg_daycount, schdl_1y, ibor_tiie_shift, 
+                               flt_spread, flt_leg_daycount)
+ql_swap_hedge_2y = ql.VanillaSwap(1, 1.95e9, schdl_2y, 0.10356, 
+                               fxd_leg_daycount, schdl_2y, ibor_tiie_shift, 
+                               flt_spread, flt_leg_daycount)
+swap_pricing_eng = ql.DiscountingSwapEngine(crv_TIIE_shift)
+ql_swap_tiie.setPricingEngine(swap_pricing_eng)
+ql_swap_hedge_1y.setPricingEngine(swap_pricing_eng)
+ql_swap_hedge_2y.setPricingEngine(swap_pricing_eng)
+
+npv_shift_1y1y = ql_swap_tiie.NPV()
+npv_shift_hedge_1y = ql_swap_hedge_1y.NPV()
+npv_shift_hedge_2y = ql_swap_hedge_2y.NPV()
+npvChg_hedge = npv_shift_hedge_1y-hedge_1y_npv0 + npv_shift_hedge_2y-hedge_2y_npv0
+
+print('NPV Change Afer Market Sold Off:'+\
+      f'\n\tNo Hedge: {npv_shift_1y1y-T1y1y_npv0: ,.0f}'+\
+      f'\n\tHedge: {npv_shift_1y1y-T1y1y_npv0 + npvChg_hedge:,.0f}')
+
+
+# Lets see what happens with slope shifts
+mkt_TIIE_shift = mkt_TIIE.copy()
+mkt_TIIE_shift.loc[:4,'Quote'] += 20/100
+mkt_TIIE_shift.loc[5:,'Quote'] += 30/100
+rv_TIIE_shift = ql.RelinkableYieldTermStructureHandle()
+crv_TIIE_shift.linkTo(
+    ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(0), 
+                                        qlHelper_TIIE(market_data=mkt_TIIE_shift) , 
+                                        ql.Actual360()))
+
+ibor_tiie_shift = ql.IborIndex('TIIE', ql.Period(ql.EveryFourthWeek), 1,
+                         ql.MXNCurrency(), ql.Mexico(), non_workday_adj, False,
+                         ql.Actual360(), crv_TIIE_shift)
+
+ql_swap_tiie = ql.VanillaSwap(swap_position, notional, schdl_1y1y, fxd_rate, 
+                              fxd_leg_daycount, schdl_1y1y, ibor_tiie_shift, 
+                              flt_spread, flt_leg_daycount)
+ql_swap_hedge_1y = ql.VanillaSwap(-1, 1.88e9, schdl_1y, 0.112425, 
+                               fxd_leg_daycount, schdl_1y, ibor_tiie_shift, 
+                               flt_spread, flt_leg_daycount)
+ql_swap_hedge_2y = ql.VanillaSwap(1, 1.95e9, schdl_2y, 0.10356, 
+                               fxd_leg_daycount, schdl_2y, ibor_tiie_shift, 
+                               flt_spread, flt_leg_daycount)
+swap_pricing_eng = ql.DiscountingSwapEngine(crv_TIIE_shift)
+ql_swap_tiie.setPricingEngine(swap_pricing_eng)
+ql_swap_hedge_1y.setPricingEngine(swap_pricing_eng)
+ql_swap_hedge_2y.setPricingEngine(swap_pricing_eng)
+
+npv_shift_1y1y = ql_swap_tiie.NPV()
+npv_shift_hedge_1y = ql_swap_hedge_1y.NPV()
+npv_shift_hedge_2y = ql_swap_hedge_2y.NPV()
+npvChg_hedge = npv_shift_hedge_1y-hedge_1y_npv0 + npv_shift_hedge_2y-hedge_2y_npv0
+
+print('NPV Change Afer Market Bear Steepened:'+\
+      f'\n\tNo Hedge: {npv_shift_1y1y-T1y1y_npv0: ,.0f}'+\
+      f'\n\tHedge: {npv_shift_1y1y-T1y1y_npv0 + npvChg_hedge:,.0f}')
 
