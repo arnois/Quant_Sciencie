@@ -3,10 +3,69 @@ import numpy as np
 import pandas as pd
 import datetime as dt
 import holidays
+
+#%% DATA IMPORT
+
+# Function to import bond data from price vendor VALMER
+def data_from_valmer(fpath: str = r'C:\Users\jquintero\Downloads',
+                     fdate: str = '20231122') -> pd.DataFrame:
+    """
+    Import MBONO data.
+
+    Args:
+    - fpath (str): Path where the VALMER file is located.
+    - fdate (str): Date for retreiving closing data from VALMER.
+
+    Returns:
+        (pd.DataFrame) Characteristics for each MBONO.
+    """
+    # File default name
+    fname = r'\Niveles_de_Valuacion_'
+    
+    # Whole file path 
+    path = fpath+fname+fdate+'.xlsx'
+    
+    # Bond CPN rate by mty
+    specs_path = r'H:\mbonos_specs.xlsx'
+    df_mbonospecs = pd.read_excel(specs_path)
+    df_mbonospecs['Maturity'] = df_mbonospecs['Maturity'].\
+        apply(lambda c: dt.datetime.strptime(c,'%d/%m/%Y'))
+    df_mbonospecs[['Maturity', 'Coupon']]
+    
+    # File read
+    tmpdf = pd.read_excel(path)
+    
+    # Indexes of MBONOS loc
+    r,c = np.where(tmpdf == 'Bonos de Tasa Fija (BONOS M)')
+    r,c = r[0], c[0]
+    
+    # First True value
+    idx_1stT = tmpdf.iloc[r:, c].isnull().idxmax()
+    
+    # Second True value
+    idx_2ndT = (tmpdf.iloc[r:, c]).loc[idx_1stT+1:].isnull().idxmax()
+    
+    # Data
+    df_bonos = tmpdf.iloc[r:idx_2ndT, 1:4].dropna()
+    df_bonos.columns = df_bonos.iloc[0]
+    df_bonos = df_bonos.drop(df_bonos.iloc[0].name).reset_index(drop=True)
+    df_bonos.columns.rename('', inplace=True)
+    
+    # Data proc
+    df_bonos.insert(1,'Mty',df_bonos['Instrumento'].\
+                    apply(lambda c: dt.datetime.strptime(c[-6:],'%y%m%d')))
+    renamedic = {'Instrumento':'ID', 'Plazos': 'DTM', 'Hoy':'YTM'}
+    df_bonos = df_bonos.merge(df_mbonospecs[['Maturity', 'Coupon']], 
+                              how='left', left_on='Mty', right_on='Maturity').\
+        drop('Mty',axis=1).rename(columns=renamedic)
+    
+    return df_bonos
+
 #%% Interest Rates
 
 # Function to measure interest 
-def calc_interest(VT: float = 100, V0: float = 96, t: float = 0.5, im: str = 'eff') -> float:
+def calc_interest(VT: float = 100, V0: float = 96, t: float = 0.5, 
+                  im: str = 'eff') -> float:
     """
     Calculate interest earned.
 
@@ -30,7 +89,8 @@ def calc_interest(VT: float = 100, V0: float = 96, t: float = 0.5, im: str = 'ef
     return I
 
 # Function to measure interest rate
-def calc_interest_rate(VT: float = 100, V0: float = 96, t: float = 0.5, im: str = 'eff') -> float:
+def calc_interest_rate(VT: float = 100, V0: float = 96, t: float = 0.5, 
+                       im: str = 'eff') -> float:
     """
     Calculate interest rate earned.
 
@@ -48,7 +108,8 @@ def calc_interest_rate(VT: float = 100, V0: float = 96, t: float = 0.5, im: str 
     return I/V0
 
 # Accumulation factor function given an interest rate 
-def accum_f(i: float = 0.04, n: float = 1, itype: str = 'simple', m: float = 1) -> float:
+def accum_f(i: float = 0.04, n: float = 1, itype: str = 'simple', 
+            m: float = 1) -> float:
     """
     Calculate end-of-period value of a $1-investment.
 
@@ -103,7 +164,7 @@ def DF(i: float = 0.04, n: float = 1,
         return np.nan
         
     return DF_n
-
+###############################################################################
 """
 Lets compute simple and compounding interests
 """
@@ -143,8 +204,32 @@ def PV(cf: float = 100, i: float = 0.04, n: float = 1,
     discount_factor = DF(i=i, n=n, itype=itype, m=m)
     
     return discount_factor*cf
-
+###############################################################################
 #%% BOND PRICING
+
+# Function to compute zero-coupon bond price
+def zcb_price(nominal: float = 10.0, r: float = 0.1120, 
+              dtm: int = 182, ybc: int = 360) -> float:
+    
+    """
+    Calculate the price of a Zero-Coupon Bond (ZCB).
+
+    Args:
+    - nominal: Bond's face value
+    - r (float): Yield rate (as a decimal, for example, 0.05 for 5%).
+    - dtm (int): Days to maturity.
+    - ybc (int): Convention for year base. For example: 360, 365, 252.
+
+    Returns:
+    float: ZCB price.
+    """
+    return PV(cf=nominal,i=r,n=dtm/ybc,itype='simple',m=dtm/ybc)
+###############################################################################
+"""
+Lets price a CETE.
+"""
+print(f'CETE Price: {zcb_price():,.6f}\n\tr: 11.20%\n\tDTM: 182')
+
 """
 Lets price a 10-year maturity bond yielding 6.25% interest, 
 paying yearly a 4.5%-coupon over a par value of $100.
@@ -174,21 +259,20 @@ dfb = pd.DataFrame({'period':np.arange(1,11,1), 'CF':cashflows, 'PV_CF':PV_cf})
 print(f"Bond Specs:\n{dfb}")
 
 # Function to price a bond
-def bond_price(settle_date: dt.date, mty_date: dt.date, n_coup_days: int, 
+def bond_price(settle_date: dt.date, mty_date: dt.date, coup_freq: int, 
                par_value: float, coupon_rate: float, ytm: float, 
-               m: float, yearbase_conv: int = 360) -> tuple:
+               ybc: int = 360) -> tuple:
     """
     Calculate bond price.
 
     Args:
     - settle_date (dt.date): Settlement date.
     - mty_date (dt.date): Maturity date.
-    - n_coup_days (int): Frequency of coupon payment in days.
+    - coup_freq (int): Frequency of coupon payment in days.
     - par_value (float): Nominal or face value.
     - coupon_rate (float): Coupon rate
     - ytm (float): Yield to maturity.
-    - m (float): Compounding frequency.
-    - yearbase_conv (int): Days in a year convention for periods.
+    - ybc (int): Days in a year convention for periods.
 
     Returns:
         (tuple) Bond price with cashflows characteristics table.
@@ -197,10 +281,10 @@ def bond_price(settle_date: dt.date, mty_date: dt.date, n_coup_days: int,
     T = (mty_date - settle_date).days
     
     # Coupons left
-    n_coup_left = np.ceil(T/n_coup_days).astype(int)
+    n_coup_left = np.ceil(T/coup_freq).astype(int)
 
     # Payment dates
-    coup_freq = int(yearbase_conv*m)
+    m = coup_freq/ybc
     CF_dates = pd.bdate_range(start=mty_date, periods=n_coup_left, 
                               freq='-'+str(coup_freq)+'D', 
                               holidays=holidays.MX()).sort_values()
@@ -212,7 +296,7 @@ def bond_price(settle_date: dt.date, mty_date: dt.date, n_coup_days: int,
 
     # Discount Factors
     bond_CF_dtm = np.array([x.days for x in (CF_dates - settle_date)])
-    bond_CF_period = bond_CF_dtm/yearbase_conv
+    bond_CF_period = bond_CF_dtm/ybc
     bond_DF = DF(ytm, bond_CF_period, 'c', m)
 
     # Bond specs dataframe
@@ -231,10 +315,14 @@ def bond_price(settle_date: dt.date, mty_date: dt.date, n_coup_days: int,
 """
 Lets price the MBONO May31.
 """
+# Trade & Settle dates
+trade_date = dt.datetime.now().date()
+settle_date = trade_date + pd.offsets.\
+    CustomBusinessDay(n=2, calendar=holidays.MX())
 # M31 characteristics
+mty_str = '2031-05-29'
 yearbase_conv = 360
-settle_date = dt.datetime(2023,10,12)
-mty_date = dt.datetime(2031,5,29)
+mty_date = dt.datetime.strptime(mty_str, '%Y-%m-%d')
 T = (mty_date - settle_date).days
 coup_freq = 182
 n_coup_left = np.ceil(T/coup_freq).astype(int)
@@ -243,26 +331,28 @@ cf_dates = pd.bdate_range(start=mty_date, periods=n_coup_left,
                           holidays=holidays.MX()).sort_values()
 vn = 100
 coupon_rate = 7.75/100
-comp_conv = coup_freq/yearbase_conv
-ytm = 9.90/100
+ytm = 9.60/100
 
 # M31 Price & CF table
 m31_price, df_m31 = bond_price(settle_date, mty_date, coup_freq, vn, 
-                               coupon_rate, ytm, comp_conv, yearbase_conv)
+                               coupon_rate, ytm, yearbase_conv)
 # accrued interest
-m31_accInt = (182-df_m31.iloc[0]['dtm'])/360*coupon_rate*par_value
+m31_accInt = (182-df_m31.iloc[0]['dtm'])/360*coupon_rate*vn
 m31_price_cln = m31_price - m31_accInt
+
+# M31 pricing output
 print(f'The price of the bond is: ${m31_price: .6f}')
 print(f'Bond clean price: ${m31_price_cln: .6f}')
 print(f'Bond accrued interest: ${m31_accInt: .6f}')
 print(f"M31 Specs:\n{df_m31}")
-###############################################################################
+
 
 #%% BOND RISK MEASURES
+
 # Function to compute bond duration
 def bond_risk_dur(df_bond_specs: pd.DataFrame, m: float) -> float:
     """
-    Calculate bond duration.
+    Calculate bond duration in years.
 
     Args:
     - df_bond_specs (pd.DataFrame): Bond specs with the periods, cashflows and
@@ -270,7 +360,7 @@ def bond_risk_dur(df_bond_specs: pd.DataFrame, m: float) -> float:
     - m (float): Compounding frequency.
 
     Returns:
-        (float) Bond duration.
+        (float) Bond duration in years.
     """
     # PV of cashflows
     PV_CF = df_bond_specs['CF']*df_bond_specs['DF']
@@ -298,11 +388,10 @@ def bond_risk_mdur(dur: float, y: float, m: float) -> float:
     Returns:
         (float) Bond modified duration.
     """
-    
     return dur/(1+y*m)
 
 # Function to compute bond dv01 risk measure
-def bond_risk_dv01_approx(df_bond_specs: pd.DataFrame, y: float, m: float) -> float:
+def bond_risk_dv01(df_bond_specs: pd.DataFrame, y: float, m: float) -> float:
     """
     Calculate bond DV01 risk.
 
@@ -323,33 +412,88 @@ def bond_risk_dv01_approx(df_bond_specs: pd.DataFrame, y: float, m: float) -> fl
     dur = bond_risk_dur(df_bond_specs, m)
     # Modified duration
     mdur = bond_risk_mdur(dur, y, m)
-    # DV01 via ModDur
-    dv01_approx = P*mdur/10000
+    # Price change wrt ytm
+    derivP = -1*mdur*P
     
-    return -1*dv01_approx
-
+    return derivP/10000
+###############################################################################
 """
 Lets compute the MBONO May31 Risk Measures.
 """
 # Duration
-m31_dur = bond_risk_dur(df_m31, comp_conv)
+m31_dur = bond_risk_dur(df_m31, coup_freq/yearbase_conv)
 # Modified Duration
-m31_mdur = bond_risk_mdur(m31_dur, ytm, comp_conv)
+m31_mdur = bond_risk_mdur(m31_dur, ytm, coup_freq/yearbase_conv)
 # DV01 via ModDur
-m31_dv01_mdur = bond_risk_dv01_approx(df_m31, ytm, comp_conv)
-df_m31_risks = pd.DataFrame({'Measure': [m31_dur, m31_mdur, m31_dv01_mdur]}, index = ['Dur', 'ModDur', 'DV01'])
+m31_dv01_mdur = bond_risk_dv01(df_m31, ytm, coup_freq/yearbase_conv)
+df_m31_risks = pd.DataFrame({'Measure': [m31_dur, m31_mdur, m31_dv01_mdur]}, 
+                            index = ['Dur', 'ModDur', 'DV01'])
 print('\nM31 Risk Measures\n')
 print(df_m31_risks)
 
-"""
-Lets compute the MBONO May31 DV01 Measure by def.
-"""
+###############################################################################
+from sympy import symbols, diff
 
-# Function to compute DV01 risk by def
-def bond_risk_dv01(settle_date: dt.date, mty_date: dt.date, n_coup_days: int, 
+def B(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int, 
+      par_value: float, coupon_rate: float, ybc: int) -> float:
+    # Maturity in days
+    T = (mty_date - settle_date).days
+    
+    # Coupons left
+    n_coup_left = np.ceil(T/coup_freq).astype(int)
+
+    # Payment dates
+    m = coup_freq/ybc
+    CF_dates = pd.bdate_range(start=mty_date, periods=n_coup_left, 
+                              freq='-'+str(coup_freq)+'D', 
+                              holidays=holidays.MX()).sort_values()
+
+    # Coupon payments
+    c_pmt = coupon_rate*par_value*m
+    bond_CF = np.repeat(c_pmt, n_coup_left)
+    bond_CF[-1] += par_value
+
+    # Discount Factors
+    bond_CF_dtm = np.array([x.days for x in (CF_dates - settle_date)])
+    bond_CF_period = bond_CF_dtm/ybc
+    bond_DF = DF(ytm/100, bond_CF_period, 'c', m)
+    
+    return (bond_CF*bond_DF).sum()
+    
+
+def deriv_B(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int, 
+            par_value: float, coupon_rate: float, ybc: int):
+    # Bond price and cashflow table
+    price, df_specs = bond_price(settle_date, mty_date, coup_freq, par_value,
+                                 coupon_rate, ytm, ybc)
+    # Macaulay duration
+    b_dur = bond_risk_dur(df_specs, coup_freq/ybc)
+    
+    # Modified duration
+    modD = bond_risk_mdur(b_dur, ytm, coup_freq/ybc)
+    
+    # Price deriv wrt ytm; for delta ytm = 100 bps
+    #derivPrice_y = -1*modD*price/100
+    # Price deriv wrt ytm; for delta ytm = 1 bps
+    derivPrice_y = -1*modD*price/10000
+    
+    return derivPrice_y
+
+# Lets assert the first derivative is well coded/defined
+x = symbols('x')
+f,_ = bond_price(settle_date, mty_date, coup_freq, vn, coupon_rate, x, yearbase_conv)
+f = B(x, settle_date, mty_date, coup_freq, vn, coupon_rate, yearbase_conv)
+f_prime = diff(f,x)
+def f_prime2(x): return deriv_B(x, settle_date, mty_date, coup_freq, vn, coupon_rate, yearbase_conv)
+f_prime.evalf(subs={x:9.55})/100 - f_prime2(0.0955) # checked
+
+
+###############################################################################
+# Function to compute DV01 risk as 1st derivative of the bond price
+def bond_price_deriv1(settle_date: dt.date, mty_date: dt.date, n_coup_days: int, 
                par_value: float, coupon_rate: float, ytm: float, m: float) -> tuple:
     """
-    Calculate bond DV01.
+    Calculate bond price first derivative.
 
     Args:
     - settle_date (dt.date): Settlement date.
@@ -379,10 +523,14 @@ def bond_risk_dv01(settle_date: dt.date, mty_date: dt.date, n_coup_days: int,
     
     return bond_dv01
 
+###############################################################################
 
+"""
+Lets compute the MBONO May31 DV01 Measure by def.
+"""
 # M31 DV01
-m31_dv01 = bond_risk_dv01(dt.datetime(2023,10,12), dt.datetime(2031,5,29), 
-                           182, 100, 7.75/100, 9.90/100, 182/360)
+m31_dv01 = bond_risk_dv01(settle_date, mty_date, coup_freq, vn, coupon_rate, 
+                          ytm, coup_freq/yearbase_conv)
 print(f'M31 DV01 Risk: {m31_dv01: .6f}')
 
 #%% RATES TERM STRUCTURE
@@ -394,9 +542,22 @@ tmppath = r'H:\Python\KaxaNuk\FixedIncome'
 db_cetes = pd.read_excel(tmppath+r'\HistoricoDeuda.xlsx', sheet_name='Cetes')
 db_mbonos = pd.read_excel(tmppath+r'\HistoricoDeuda.xlsx', sheet_name='Bonos')
 
-# Function to extract matiruty data from bond serial name
-def bond_mty_from_name():
-    return
+# Function to extract maturity data from bond serial name
+def bond_mty_from_name(serial_name: str) -> dt.datetime:
+    """
+    Parse bond maturity date from string serial name data.
+
+    Args:
+    - serial_name (str): Bond serial name from ticker/name/name_id column data.
+
+    Returns:
+        (dt.datetime) Bond maturity date.
+    """
+    # Get maturity string
+    str_mty = serial_name[-6:]
+    # Maturity in datetime type
+    T = dt.datetime(2000+int(str_mty[:2]), int(str_mty[2:4]), int(str_mty[-2:]))
+    return T
 
 # Set dates
 dt_date1, dt_date2 = dt.datetime(2023,10,2), dt.datetime(2023,9,4)
@@ -545,23 +706,116 @@ plt.tight_layout()
 plt.show()
 
 #%%############################################################################
-# If we define it as a function:
-def pv(pmt, years, r, fv = 0):
-    '''
-    Like the BAII Plus Financial calculator, 
-    computes the present value of a series of cashflows
-    '''
+# QUANTLIB
+import QuantLib as ql
+
+trade_date = dt.datetime(2023,10,10)
+ql_valdate = ql.Date(trade_date.day, trade_date.month, trade_date.year)
+ql.Settings.instance().evaluationDate = ql_valdate
+
+# Function to parse datetime into ql.Date
+def parse_datetime_2_qlDate(date: dt.datetime) -> ql.Date:
+    """
+    Parse bond maturity date from datetime to ql.Date type.
+
+    Args:
+    - date (dt.datetime): Date to parse.
+
+    Returns:
+        (ql.Date) Date as ql.Date data type.
+    """
+    # Extract date atoms
+    day, month, yr = date.day, date.month, date.year
+    return ql.Date(day, month, yr)
+
+# MBONO Curve
+df_crv_m = db_mbonos[db_mbonos['dteDate'] == dt_date1][
+    ['txtInstrumento','DTM','YTM','CPA']].reset_index(drop=True).sort_values('DTM')
+df_crv_m['MTY'] = df_crv_m['txtInstrumento'].apply(bond_mty_from_name)
+df_crv_m['MTY_ql'] = df_crv_m['MTY'].apply(parse_datetime_2_qlDate)
+
+spotDates = df_crv_m['MTY_ql'].tolist()
+spotDates.insert(0, ql_valdate)
+spotRates = (df_crv_m['YTM']/100).tolist()
+spotRates.insert(0, 11.25/100)
+
+dayCount = ql.Actual360()
+calendar = ql.Mexico()
+interpolation = ql.Linear()
+compType= ql.Compounded
+compFreq = ql.Annual #ql.OtherFrequency
+
+# M31
+issueDate = ql.Date(23,6,2011)
+maturityDate = df_crv_m[df_crv_m['MTY']=='2031-05-29']['MTY_ql'].values[0]
+tenor = ql.Period('26W')
+calendar = ql.Mexico()
+bussinessConvention = ql.Following
+dateGeneration = ql.DateGeneration.Backward
+monthEnd = False
+# Bond pmt schedule
+schedule = ql.Schedule(issueDate, maturityDate, tenor, calendar, 
+                       bussinessConvention, bussinessConvention, 
+                       dateGeneration, monthEnd)
+list(schedule)
+dayCount = ql.Actual360()
+couponRate = df_crv_m[df_crv_m['MTY']=='2031-05-29']['CPA'].to_numpy()[0]/100
+coupons = [couponRate]
+
+settlementDays = 2
+faceValue = 100
+fixedRateBond = ql.FixedRateBond(settlementDays, faceValue, schedule, coupons, dayCount)
+
+# Use this curve for pricing via bootstrapped zero curve
+spotCurve = ql.ZeroCurve(spotDates, spotRates, dayCount, calendar, 
+                         interpolation, compType)
+spotCurveHandle = ql.YieldTermStructureHandle(spotCurve)
+
+# Use this workaround curve for pricing with the YTM
+#flatCrv = ql.FlatForward(ql.Date(12,10,2023), ql.QuoteHandle(ql.SimpleQuote(ytm)), dayCount, compType, compFreq)
+flatCrv = ql.FlatForward(2, ql.Mexico(), ql.QuoteHandle(ql.SimpleQuote(ytm)), dayCount, 1, 2)
+ytm_engine = ql.DiscountingBondEngine(ql.YieldTermStructureHandle(flatCrv))
+bondEngine = ql.DiscountingBondEngine(spotCurveHandle)
+fixedRateBond.setPricingEngine(ytm_engine)
+
+print(fixedRateBond.NPV())
+print(fixedRateBond.dirtyPrice())
+print(fixedRateBond.cleanPrice())
+print(fixedRateBond.accruedAmount())
+print(fixedRateBond.dayCounter())
+print(fixedRateBond.settlementDate())
+
+# Price with -50bp shift
+dv01 = ql.BondFunctions.basisPointValue(fixedRateBond, ql.InterestRate(ytm, dayCount, 1,2))
+P0 = fixedRateBond.dirtyPrice()
+D = ql.BondFunctions.duration(fixedRateBond, ql.InterestRate(ytm, dayCount, 1,2), ql.Duration.Macaulay)
+modD = ql.BondFunctions.duration(fixedRateBond, ql.InterestRate(ytm, dayCount, 1,2))/1
+C = ql.BondFunctions.convexity(fixedRateBond, ql.InterestRate(ytm, dayCount, 1,2))
+dr = 0.0015
+deltaPx = P0*(C/2*(dr**2) - modD*(-dr)) # deltaPx = P0*(dr**2)*C/2 - dv01*dr/0.0001
+P1 = P0 + deltaPx
+np.round(P1,6), np.round(fixedRateBond.dirtyPrice(ytm-dr,dayCount, 1, 2),6)
+
+for c in fixedRateBond.cashflows():
+    print('%20s %12f' % (c.date(), c.amount()))
     
-    cashflows = np.repeat(pmt, years)
-    cashflows[-1] += fv
-    d_factor = (np.ones(years) + r).cumprod()
-    pv_i = cashflows/d_factor
-    return -np.sum(pv_i, axis = 0)
+pd.DataFrame([(ql.as_coupon(c).accrualStartDate(), ql.as_coupon(c).accrualEndDate())
+              for c in fixedRateBond.cashflows()[:-1]],
+             columns = ('start','end'), index = range(1,len(fixedRateBond.cashflows()))
+             )
 
-pv(pmt = 5, years = 20, r = 0.06, fv = 100)
-
-pv(pmt = 65, years = 20, r = 0.06, fv = 1000)
-
+## MANUALLY
+ytm = df_crv_m[df_crv_m['MTY']=='2031-05-29']['YTM'].to_numpy()[0]/100
+# M31 Price & CF table
+m31_price, df_m31 = bond_price(settle_date, mty_date, coup_freq, vn, 
+                               coupon_rate, ytm, comp_conv, yearbase_conv)
+# accrued interest
+m31_accInt = (182-df_m31.iloc[0]['dtm'])/360*coupon_rate*par_value
+m31_price_cln = m31_price - m31_accInt
+print(f'The price of the bond is: ${m31_price: .6f}')
+print(f'Bond clean price: ${m31_price_cln: .6f}')
+print(f'Bond accrued interest: ${m31_accInt: .6f}')
+print(f"M31 Specs:\n{df_m31}")
 
 #%% 1a. Compound Interest Calculation
 def compound_interest(P: float, r: float, n: int) -> dict:
@@ -619,21 +873,4 @@ def calculate_npv(r: float, C0: float, cashflows: list) -> float:
 # Example:
 npv = calculate_npv(0.05, 10000, [3000, 4000, 5000])
 
-#%% 1c. Calculation of CETE Price
-def cete_price(r: float, t: int):
-    
-    """
-    Calculate the price of a CETE.
 
-    Args:
-    - r (float): Yield rate (as a decimal, for example, 0.05 for 5%).
-    - t (int): CETE term in days.
-
-    Returns:
-    float: CETE price rounded to 6 decimal places.
-    """
-    P = 10/(1 + (r * t / 360))
-    return round(P, 6)
-
-# Example:
-print(cete_price(0.1125, 182))
