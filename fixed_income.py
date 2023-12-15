@@ -6,9 +6,55 @@ import holidays
 
 #%% DATA IMPORT
 
+# Function to import zcb data from price vendor VALMER
+def data_from_valmer_CETE(fpath: str = r'C:\Users\jquintero\Downloads',
+                           fdate: str = '20231122') -> pd.DataFrame:
+    """
+    Import CETE data.
+
+    Args:
+    - fpath (str): Path where the VALMER file is located.
+    - fdate (str): Date for retreiving closing data from VALMER.
+
+    Returns:
+        (pd.DataFrame) Characteristics for each CETE.
+    """
+    # File default name
+    fname = r'\Niveles_de_Valuacion_'
+    
+    # Whole file path 
+    path = fpath+fname+fdate+'.xlsx'
+        
+    # File read
+    tmpdf = pd.read_excel(path)
+    
+    # Indexes of MBONOS loc
+    r,c = np.where(tmpdf == "Directo_Cete's")
+    r,c = r[0], c[0]
+    
+    # First True value
+    idx_1stT = tmpdf.iloc[r:, c].isnull().idxmax()
+    
+    # Second True value
+    idx_2ndT = (tmpdf.iloc[r:, c]).loc[idx_1stT:].isnull().idxmax()
+    
+    # Data
+    df_cets = tmpdf.iloc[r:idx_2ndT, 1:4].dropna()
+    df_cets.columns = df_cets.iloc[0]
+    df_cets = df_cets.drop(df_cets.iloc[0].name).reset_index(drop=True)
+    df_cets.columns.rename('', inplace=True)
+    
+    # Data proc
+    df_cets.insert(1,'Mty',df_cets['Instrumento'].\
+                    apply(lambda c: dt.datetime.strptime(c[-6:],'%y%m%d')))
+    renamedic = {'Instrumento':'ID', 'Dias X Vencer': 'DTM', 'Hoy':'YTM'}
+    df_cets = df_cets.rename(columns=renamedic)
+    
+    return df_cets
+
 # Function to import bond data from price vendor VALMER
-def data_from_valmer(fpath: str = r'C:\Users\jquintero\Downloads',
-                     fdate: str = '20231122') -> pd.DataFrame:
+def data_from_valmer_MBONO(fpath: str = r'C:\Users\jquintero\Downloads',
+                           fdate: str = '20231122') -> pd.DataFrame:
     """
     Import MBONO data.
 
@@ -30,7 +76,7 @@ def data_from_valmer(fpath: str = r'C:\Users\jquintero\Downloads',
     df_mbonospecs = pd.read_excel(specs_path)
     df_mbonospecs['Maturity'] = df_mbonospecs['Maturity'].\
         apply(lambda c: dt.datetime.strptime(c,'%d/%m/%Y'))
-    df_mbonospecs[['Maturity', 'Coupon']]
+    df_mbonospecs = df_mbonospecs[~df_mbonospecs[['Maturity']].duplicated()]
     
     # File read
     tmpdf = pd.read_excel(path)
@@ -415,7 +461,7 @@ def bond_risk_dv01(df_bond_specs: pd.DataFrame, y: float, m: float) -> float:
     # Price change wrt ytm
     derivP = -1*mdur*P
     
-    return derivP/10000
+    return derivP*0.0001
 ###############################################################################
 """
 Lets compute the MBONO May31 Risk Measures.
@@ -434,6 +480,7 @@ print(df_m31_risks)
 ###############################################################################
 from sympy import symbols, diff
 
+# Function to compute bond price
 def B(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int, 
       par_value: float, coupon_rate: float, ybc: int) -> float:
     # Maturity in days
@@ -460,9 +507,9 @@ def B(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int,
     
     return (bond_CF*bond_DF).sum()
     
-
+# Function to compute first derivative of bond price wrt yield
 def deriv_B(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int, 
-            par_value: float, coupon_rate: float, ybc: int):
+            par_value: float, coupon_rate: float, ybc: int) -> float:
     # Bond price and cashflow table
     price, df_specs = bond_price(settle_date, mty_date, coup_freq, par_value,
                                  coupon_rate, ytm, ybc)
@@ -475,9 +522,107 @@ def deriv_B(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int,
     # Price deriv wrt ytm; for delta ytm = 100 bps
     #derivPrice_y = -1*modD*price/100
     # Price deriv wrt ytm; for delta ytm = 1 bps
-    derivPrice_y = -1*modD*price/10000
+    #derivPrice_y = -1*modD*price/10000
     
-    return derivPrice_y
+    #return derivPrice_y
+    return -modD*price
+
+# Function to compute first derivative of bond's duration wrt yield
+def deriv_D(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int, 
+            par_value: float, coupon_rate: float, ybc: int) -> float:
+    # Bond price and cashflow table
+    price, df_specs = bond_price(settle_date, mty_date, coup_freq, par_value,
+                                 coupon_rate, ytm, ybc)
+    # Macaulay duration
+    m = coup_freq/ybc
+    D = bond_risk_dur(df_specs, m)
+    
+    # PV of cashflows
+    PV_CF = df_specs['CF']*df_specs['DF']
+    # Price
+    P = np.sum(PV_CF)
+    # Cashflows weights
+    w = PV_CF/P
+    # Coupon periods
+    sqrdt = (df_specs['period']/m)**2
+    # sumation
+    sum1 = (w @ sqrdt)
+    
+    # Sumation factors
+    sF1 = D**2/(1+ytm*m)
+    sF2 = sum1*(m**2)/(1+ytm*m)
+    
+    return sF1 - sF2
+
+# Function to compute first derivative of bond's modified duration wrt yield
+def deriv_modD(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int, 
+            par_value: float, coupon_rate: float, ybc: int) -> float:
+    # Bond price and cashflow table
+    price, df_specs = bond_price(settle_date, mty_date, coup_freq, par_value,
+                                 coupon_rate, ytm, ybc)
+    # Macaulay duration
+    m = coup_freq/ybc
+    D = bond_risk_dur(df_specs, m)
+    
+    # Macaulay duration 1st derivative
+    derivD = deriv_D(ytm, settle_date, mty_date, coup_freq, par_value, coupon_rate, ybc)
+    
+    # Sumation factors
+    sF1 = derivD/(1+ytm*m)
+    sF2 = m/((1+ytm*m)**2)*D
+    
+    return sF1 - sF2
+
+# Function to compute convexity of bond price
+def bond_convexity(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int, 
+            par_value: float, coupon_rate: float, ybc: int) -> float:
+    # Bond price and cashflow table
+    price, df_specs = bond_price(settle_date, mty_date, coup_freq, par_value,
+                                 coupon_rate, ytm, ybc)
+    # Macaulay duration
+    b_dur = bond_risk_dur(df_specs, coup_freq/ybc)
+    
+    # Modified duration
+    modD = bond_risk_mdur(b_dur, ytm, coup_freq/ybc)
+    
+    # Modified duration 1st derivative
+    derivmodD = deriv_modD(ytm, settle_date, mty_date, coup_freq, par_value, coupon_rate, ybc)
+    
+    return (modD**2-derivmodD)
+
+# Function to compute convexity of bond price by approximation
+def bond_convexity_approx(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int, 
+            par_value: float, coupon_rate: float, ybc: int) -> float:
+    # 1bp yield change
+    d = 0.0001
+    
+    # Bond price 
+    V0 = B(100*ytm, settle_date, mty_date, coup_freq, par_value, coupon_rate, ybc)
+    
+    # Bond price +1/-1 bp
+    Vplus = B(100*(ytm+d), settle_date, mty_date, coup_freq, par_value, coupon_rate, ybc)
+    Vminus = B(100*(ytm-d), settle_date, mty_date, coup_freq, par_value, coupon_rate, ybc)
+    
+    return (Vplus+Vminus-2*V0)/(V0*d**2)
+
+# Function to compute second derivative of bond price wrt yield
+def deriv2_B(ytm: float, settle_date: dt.date, mty_date: dt.date, coup_freq: int, 
+            par_value: float, coupon_rate: float, ybc: int) -> float:
+    # Bond price and cashflow table
+    price, df_specs = bond_price(settle_date, mty_date, coup_freq, par_value,
+                                 coupon_rate, ytm, ybc)
+    # Macaulay duration
+    b_dur = bond_risk_dur(df_specs, coup_freq/ybc)
+    
+    # Modified duration
+    modD = bond_risk_mdur(b_dur, ytm, coup_freq/ybc)
+    
+    # Modified duration 1st derivative
+    derivmodD = deriv_modD(ytm, settle_date, mty_date, coup_freq, par_value, coupon_rate, ybc)
+    
+    return price*(modD**2-derivmodD)
+
+
 
 # Lets assert the first derivative is well coded/defined
 x = symbols('x')
@@ -485,57 +630,105 @@ f,_ = bond_price(settle_date, mty_date, coup_freq, vn, coupon_rate, x, yearbase_
 f = B(x, settle_date, mty_date, coup_freq, vn, coupon_rate, yearbase_conv)
 f_prime = diff(f,x)
 def f_prime2(x): return deriv_B(x, settle_date, mty_date, coup_freq, vn, coupon_rate, yearbase_conv)
-f_prime.evalf(subs={x:9.55})/100 - f_prime2(0.0955) # checked
-
+f_prime.evalf(subs={x:9.55})/100 - f_prime2(0.0955)*0.0001 # checked
 
 ###############################################################################
-# Function to compute DV01 risk as 1st derivative of the bond price
-def bond_price_deriv1(settle_date: dt.date, mty_date: dt.date, n_coup_days: int, 
-               par_value: float, coupon_rate: float, ytm: float, m: float) -> tuple:
+
+# Function to compute second order approx of bond pct change wrt changes in ytm
+def delta_pctB(dy: float = 0.0001, modD: float = 5.29, C: float = 35) -> float:
     """
-    Calculate bond price first derivative.
+    Calculate bond percent change wrt changes in the ytm.
 
     Args:
-    - settle_date (dt.date): Settlement date.
-    - mty_date (dt.date): Maturity date.
-    - n_coup_days (int): Frequency of coupon payment in days.
-    - par_value (float): Nominal or face value.
-    - coupon_rate (float): Coupon rate
-    - ytm (float): Yield to maturity.
-    - m (float): Compounding frequency.
+    - dy (float): Yield to maturity change.
+    - modD (float): Bond's modified duration.
+    - C (float): Bond's convexity.
 
     Returns:
-        (tuple) Bond DV01 risk.
+        (float) Bond's percent change after a change in the YTM.
     """
-    # Bond price
-    P, df_bond_specs = bond_price(settle_date, mty_date, n_coup_days, 
-                                  par_value, coupon_rate, ytm, m)
-    # Bond price wrt +1bp
-    P_plus1bp, df_bond_specs_plus1bp = bond_price(settle_date, mty_date, 
-                                                  n_coup_days, par_value, 
-                                                  coupon_rate, ytm+0.0001, m)
-    # Bond price wrt -1bp
-    P_minus1bp, df_bond_specs_minus1bp = bond_price(settle_date, mty_date, 
-                                                    n_coup_days, par_value, 
-                                                    coupon_rate, ytm-0.0001, m)
-    # Bond DV01
-    bond_dv01 = -1*np.mean(abs(np.array([P_plus1bp-P, P_minus1bp-P])))
     
-    return bond_dv01
+    return C/2*(dy**2)-modD*dy
 
+"""
+Lets compute the price change in the MBONO May31 after a 200bp rally
+"""
+dy = -200*0.0001
+C = bond_convexity(ytm, settle_date, mty_date, coup_freq, vn, coupon_rate, yearbase_conv)
+pctChgB = delta_pctB(dy, m31_mdur, C)
+chgB = m31_price*pctChgB
+realPriceChg = B(100*(ytm+dy),settle_date,mty_date,coup_freq,vn,coupon_rate,yearbase_conv)
+print('\nM31 Price after 200bp rally:'+\
+      f'\n\t Price: {realPriceChg:,.4f}'+\
+      f'\n\t2nd Ord Approx: {m31_price+chgB:,.4f}')
 ###############################################################################
-
-"""
-Lets compute the MBONO May31 DV01 Measure by def.
-"""
-# M31 DV01
-m31_dv01 = bond_risk_dv01(settle_date, mty_date, coup_freq, vn, coupon_rate, 
-                          ytm, coup_freq/yearbase_conv)
-print(f'M31 DV01 Risk: {m31_dv01: .6f}')
-
-#%% RATES TERM STRUCTURE
 from matplotlib import pyplot as plt
 from matplotlib.ticker import StrMethodFormatter
+"""
+Lets compute viz the MBONO May31's Convexity
+"""
+# Price-Yield Curve
+dyrange = np.arange(-400,401,1)*0.0001
+yrange = ytm + dyrange
+B_yrange = []
+for y in yrange:
+    B_yrange.append(B(100*y, settle_date, mty_date, coup_freq, par_value,coupon_rate, yearbase_conv))
+m31_price_ytm_df = pd.DataFrame({'YTM':yrange, 'Price': B_yrange})
+
+# 1st Order Approximation
+B_yrange_approx = m31_price-dyrange*m31_mdur*m31_price
+
+# 2nd Order Approximation
+B_yrange_approx2 = m31_price + m31_price*(C/2*dyrange**2 - m31_mdur*dyrange)
+
+# M31 Price-Yield Curve
+ax = m31_price_ytm_df.plot(x='YTM', y='Price',title='M31 Price-YTM')#, marker='.', mfc='w')
+ax.plot(m31_price_ytm_df.YTM, B_yrange_approx, linestyle='--')
+ax.plot(m31_price_ytm_df.YTM, B_yrange_approx2, linestyle='--')
+ax.legend(['Price', '1st Ord Approx', '2nd Ord Approx'])
+ax.xaxis.set_major_formatter(StrMethodFormatter('{x:,.1%}'))
+ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'))
+ax.set_xlabel("YTM")
+ax.set_ylabel("Price")
+plt.tight_layout()
+plt.show()
+###############################################################################
+"""
+Lets get each MBONO Convexity
+"""
+filedate = '20231205'
+df_mbono = data_from_valmer_MBONO(fdate=filedate)
+df_mbono[['P', 'modD', 'C']] = 0
+for i,r in df_mbono.iterrows():
+    B0 = B(r['YTM'], settle_date, r['Maturity'], 182, 100, r['Coupon']/100, yearbase_conv)
+    D0 = -deriv_B(r['YTM']/100, settle_date,  r['Maturity'], 182, 100,  r['Coupon']/100, yearbase_conv)/B0
+    C = bond_convexity(r['YTM']/100, settle_date,  r['Maturity'], 182, 100,  r['Coupon']/100, yearbase_conv)
+    df_mbono.loc[i,['P', 'modD', 'C']] = B0,D0,C
+    
+# Lets add expected price change over a 100bp rally
+dY = -0.02
+df_mbono['chgP'] = df_mbono.apply(lambda x: 
+                                  (dY**2*x['C']/2-x['modD']*dY),
+                                  axis=1)
+df_mbono['chgP2'] = df_mbono.apply(lambda x: 
+                                  (dY**2*x['C']/2-x['modD']*(-dY)),
+                                  axis=1)
+    
+    
+# CETEs
+df_cete = data_from_valmer_CETE(fdate=filedate)
+df_cete['DTM'] = (df_cete['Mty'] - settle_date).apply(lambda x: x.days)
+df_cete[['P','modD', 'C']] = 0
+for i,r in df_cete.iterrows():
+    Z0 = zcb_price(r = r['YTM']/100, dtm = r['DTM'])
+    Zp = zcb_price(r = (r['YTM']+0.01)/100, dtm = r['DTM'])
+    Zm = zcb_price(r = (r['YTM']-0.01)/100, dtm = r['DTM'])
+    D0 = (r['DTM']/360)/(1+r['YTM']*r['DTM']/36000)
+    C = (Zp+Zm-2*Z0)/(Z0*0.0001**2)
+    df_cete.loc[i,['P', 'modD', 'C']] = Z0,D0,C
+
+
+#%% RATES TERM STRUCTURE
 
 # import historic data
 tmppath = r'H:\Python\KaxaNuk\FixedIncome'
@@ -808,7 +1001,7 @@ pd.DataFrame([(ql.as_coupon(c).accrualStartDate(), ql.as_coupon(c).accrualEndDat
 ytm = df_crv_m[df_crv_m['MTY']=='2031-05-29']['YTM'].to_numpy()[0]/100
 # M31 Price & CF table
 m31_price, df_m31 = bond_price(settle_date, mty_date, coup_freq, vn, 
-                               coupon_rate, ytm, comp_conv, yearbase_conv)
+                               coupon_rate, ytm, yearbase_conv)
 # accrued interest
 m31_accInt = (182-df_m31.iloc[0]['dtm'])/360*coupon_rate*par_value
 m31_price_cln = m31_price - m31_accInt

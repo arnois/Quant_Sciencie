@@ -1,0 +1,1 @@
+runfile('H:/Python/mt5_ea_copmod/copstrat.py', wdir='H:/Python/mt5_ea_copmod'); main('USDJPY')
