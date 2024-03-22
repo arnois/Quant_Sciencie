@@ -1,6 +1,8 @@
 """
-Objective: Quant model research for trading/investment strategies over fixed
-income securities. Particularly, over US, MX and cross asset classes.
+Objective: 
+    Quant model research for trading/investment strategies over fixed
+    income securities. Particularly, over US, MX and cross asset classes.
+
 # Author: Arnulf (arnulf.q@gmail.com)
 """
 ###############################################################################
@@ -50,7 +52,7 @@ from udf_trading_hyperdrive import *
 str_path = r'H:\db'
 str_file = r'\data_1D.csv'
 data = csvImport(str_path, str_file)
-#data.columns[:63]
+# data.columns[:300]
 ###############################################################################
 # Features
 ###############################################################################
@@ -59,90 +61,108 @@ data = csvImport(str_path, str_file)
 data['T5s7s10s'] = (2*data['TIIE7Y']-data['TIIE5Y']-data['TIIE10Y'])*100
 data['T5s10s'] = (data['TIIE10Y']-data['TIIE5Y'])*100
 data['T2s5s'] = (data['TIIE5Y']-data['TIIE2Y'])*100
+data['T2s3s4s'] = (2*data['TIIE3Y']-data['TIIE2Y']-data['TIIE4Y'])*100
 data['T2s5s10s'] = (2*data['TIIE5Y']-data['TIIE2Y']-data['TIIE10Y'])*100
+data['T3s5s7s'] = (2*data['TIIE5Y']-data['TIIE3Y']-data['TIIE7Y'])*100
+data['T3s5s10s'] = (2*data['TIIE5Y']-data['TIIE3Y']-data['TIIE10Y'])*100
+data['T4s5s7s'] = (2*data['TIIE5Y']-data['TIIE4Y']-data['TIIE7Y'])*100
+data['T3s4s5s'] = (2*data['TIIE4Y']-data['TIIE3Y']-data['TIIE5Y'])*100
+data['2Y1Y vs 3Y1Y'] = (data['TIIE3Y1Y']-data['TIIE2Y1Y'])*100
+data['4Y1Y vs 5Y2Y'] = (data['TIIE5Y2Y']-data['TIIE4Y1Y'])*100
+data['3Y1Y vs 4Y1Y'] = (data['TIIE4Y1Y']-data['TIIE3Y1Y'])*100
+data['3Y2Y vs 5Y2Y'] = (data['TIIE5Y2Y']-data['TIIE3Y2Y'])*100
+data['3Y2Y vs 5Y5Y'] = (data['TIIE5Y5Y']-data['TIIE3Y2Y'])*100 
+data['1Y1Y vs 2Y1Y'] = (data['TIIE2Y1Y']-data['TIIE1Y1Y'])*100
+data['2Y1Y vs 3Y2Y'] = (data['TIIE3Y2Y']-data['TIIE2Y1Y'])*100 
+data['2Y2Y vs 3Y2Y'] = (data['TIIE3Y2Y']-data['TIIE2Y2Y'])*100
 # In[]
 ###############################################################################
 # Visualization
 ###############################################################################
 # normalized rates chgs plot
-tmplst = ['TIIE1Y1Y', 'TIIE2Y5Y','TIIE10Y', 'USSW2', 'USSW5', 'USSW10']
+tmplst = ['DI1Y','DI2Y','DI3Y','DI5Y','DI7Y','DI10Y']
+tmplst = ['TIIE1Y','TIIE2Y','TIIE3Y','TIIE4Y','TIIE5Y','TIIE7Y','TIIE10Y']
+spreads = ['T4s5s7s']
 plt.style.use('seaborn')
-normLinplots(data, '2021-12-31', dt_end='', 
-             lst_securities=tmplst , plt_size=(15,9), plt_cmap='tab20c')
+normLinplots(data, '2022-12-31', dt_end='', 
+             lst_securities=spreads , plt_size=(15,9), plt_cmap='tab10')
 ###############################################################################
 # Stats
 ###############################################################################
 # level chges
-statistics(data.loc[:,tmplst].diff().dropna())
+statistics(data.loc['2016':,tmplst].diff().dropna()*100)
 ###############################################################################
 # Multivariate analysis
 ###############################################################################
 # timeframe dates
-dt_start, dt_end = '2018-02-01', '2023-03-31'
+dt_start, dt_end = '2018-12-01', '2023-12-31'
 # sel list
 explanatorylst_fi = ['TIIE1Y','TIIE2Y','TIIE3Y','TIIE4Y','TIIE5Y','TIIE7Y',
-                     'TIIE10Y',
-                     'USSW1','USSW2','USSW3','USSW5','USSW7',
-                     'USSW10','USGG2','USGG3','USGG5','USGG7','USGG10',
-                     'USGG30','EUSW2','EUSW3','EUSW5','EUSW10','EUSW15',
-                     'EUSW20','EUSW30','MXCDS','MXIVOL1M','TIIE1Y1Y','TIIE1Y2Y',
-                     'TIIE2Y1Y','TIIE1Y3Y','TIIE2Y2Y','TIIE3Y1Y','TIIE1Y4Y',
-                     'TIIE2Y3Y','TIIE3Y2Y','TIIE4Y1Y','TIIE2Y5Y','TIIE3Y4Y',
-                     'TIIE4Y3Y','TIIE5Y2Y','TIIE3Y7Y','TIIE5Y5Y','TIIE7Y3Y']
-
+                     'TIIE10Y','USDSOFR1Y','USDSOFR2Y','USDSOFR3Y','USDSOFR5Y','USDSOFR7Y',
+                     'USDSOFR10Y','ESTRSW1Y','ESTRSW2Y','ESTRSW3Y','ESTRSW5Y',
+                     'ESTRSW7Y','ESTRSW10Y','GBPOIS1Y','GBPOIS2Y','GBPOIS3Y',
+                     'GBPOIS5Y','GBPOIS7Y','GBPOIS10Y','CADSW1Y','CADSW2Y',
+                     'CADSW3Y','CADSW5Y','CADSW7Y','CADSW10Y','JPYOIS1Y',
+                     'JPYOIS2Y','JPYOIS3Y','JPYOIS5Y','JPYOIS7Y','JPYOIS10Y',
+                     'DI1Y','DI2Y','DI3Y','DI5Y','DI7Y','DI10Y','CAM1Y','CAM2Y',
+                     'CAM3Y','CAM5Y','CAM7Y','CAM10Y','IBR1Y','IBR2Y','IBR3Y',
+                     'IBR5Y','IBR7Y','IBR10Y']
 tmplst = explanatorylst_fi
 # correlation matrix
-plot_corrmatrix(data, dt_start=dt_start, dt_end=dt_end, 
-                lst_securities=tmplst, plt_size=(10,7))
+plot_corrmatrix(data.diff(), dt_start=dt_start, dt_end=dt_end, 
+                lst_securities=tmplst, plt_size=(13,10), txtCorr=False, 
+                corrM='kendall')
 # boxplots
+from scipy.stats.mstats import winsorize
 plt.style.use('ggplot')
-boxplot_rets(data,  dt_start=dt_start, dt_end=dt_end,
-             lst_securities=tmplst, str_ttl='Daily Rate Changes')
+boxplot_rets(data.diff().apply(lambda x: winsorize(x,limits=[0.03,0.12])), 
+             dt_start=dt_start, dt_end=dt_end, lst_securities=tmplst, 
+             str_ttl='Daily Rate Changes')
 # pairwise returns scatterplots
 plt.style.use('seaborn')
-scatterplot(data, dt_start=dt_start, dt_end=dt_end, lst_securities = tmplst)
+scatterplot(data.diff(), dt_start=dt_start, dt_end=dt_end, lst_securities = tmplst)
 
 ###############################################################################
 # Clustering analysis
 ###############################################################################
 # timeframe dates
-n_yr_train = 2
-tmpdtf = '2023-03-31'
+n_yr_train = 8
+tmpdtf = '2023-12-31'
 tmpdti = str(np.datetime64(tmpdtf) -\
              np.timedelta64(365*n_yr_train,'D'))
-# cluster number assessment
-preclustering(data, dt_start = tmpdti, dt_end = tmpdtf, 
-              lst_securities =tmplst, 
-              plt_size = (15,5), str_mode='norm')
-# k-means clustering of return series
+# cluster number assessment for convex similarities over rate changes stats
+tmplst2 = [item for item in tmplst if item not in ['DI1Y','DI2Y','DI3Y','DI5Y','DI7Y','DI10Y']]
+preclustering_kmeans(data, dt_start = tmpdti, dt_end = tmpdtf, 
+              lst_securities = tmplst2, 
+              plt_size = (20,10), str_mode='chg')
+# k-means clustering of return series statistics measures
 dic_cltr = cluster_kmeans(data, dt_start = tmpdti, dt_end = tmpdtf, 
-                          lst_securities = tmplst,
-                          n_clusters=3, iclrmap=True, str_mode='norm')
+                          lst_securities = tmplst2,
+                          n_clusters=8, iclrmap=True, str_mode='chg')
 dic_cltr['cluster_set']
 
 ###############################################################################
 # PCA
 ###############################################################################
 # components needed for PCA
-pca_assess(data, str_mode='chg', 
-           dt_start = tmpdti, dt_end = tmpdtf,
-          lst_securities = tmplst)
+min_comps = pca_assess(data, str_mode='chg', dt_start = tmpdti, dt_end = tmpdtf,
+          lst_securities = tmplst2)
 # PCA
 tmplst_byClust = [item for sublist in dic_cltr['cluster_set'].values() 
                   for item in sublist]
-pca_fit, loadings_df, loadings, pca_scores = pca_(data, n_comps=3, 
+pca_fit, loadings_df, loadings, pca_scores = pca_(data, n_comps=min_comps, 
                                                   dt_start = tmpdti, 
-                                                  dt_end = tmpdtf, 
+                                                  dt_end = tmpdtf,
                                                   lst_securities = tmplst_byClust, 
                                                   plt_pcmap=True,
-                                                  str_mode='norm')
+                                                  str_mode='chg',
+                                                  plt_size=(13,10))
 # first 3 PC amongst prev clusters
 #tmpclrmap = {1:'red', 2:'blue', 3:'cyan', 4:'orange', 5:'purple', 
 #                           6:'green', 7:'gray', 8:'magenta', 9:'brown', 
 #                           10:'yellow'}
-tmpclrmap = {1:'red', 2:'blue', 3:'cyan'}#, 4:'orange',
-             #5:'purple', 6:'green'} 
-             #7:'gray'}
+tmpclrmap = {1:'red', 2:'blue', 3:'cyan', 4:'orange',
+             5:'purple', 6:'green', 7:'gray', 8:'magenta'}
 plt_pcal_cltr(pca_fit, loadings_df, loadings, dic_cltr, d_cltr_cmap=tmpclrmap)
 # first 3 PC biplots
 plt_pca_biplots(pca_scores, loadings_df, loadings, dic_cltr)
@@ -168,44 +188,54 @@ from sklearn.preprocessing import StandardScaler
 sclr = StandardScaler()
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
-
+tmplst2 = [item for item in tmplst if item not in ['DI1Y','DI2Y','DI3Y','DI5Y','DI7Y','DI10Y']]
 # Proc to generate PCR model testing runs
 # hyper params
 n_rsi_l = 5
-# res vars
-df_pcr_coefs = pd.DataFrame(columns=['PC1','PC2','PC3','b'])
+# res vars # min_comps = 5
+df_pcr_coefs = pd.DataFrame(columns=[f'PC{n+1}' for n in range(min_comps)]+['b'])
 df_pcr_test_perf = pd.DataFrame(columns=['Exp.Var','Max Err','MAE',
                                          'MSE','RMSE','R2Score','MAPE'])
 dic_pcr_run = {}
 # response variable
-y_name = 'TIIE2Y1Y'
+y_name = '2Y2Y vs 3Y2Y' # 3Y1Y vs 4Y1Y, 4Y1Y vs 5Y2Y, 3Y2Y vs 5Y2Y, 3Y2Y vs 5Y5Y
 # Dates delimiters for train-test data split
 df_dates_train_test = get_train_test_split_dates(data,2,1,1)
 # Loop through study periods
-for i,r in df_dates_train_test.iterrows():
-    #i = 1
+modeldata = data.diff()*100
+for i,r in list(df_dates_train_test.iterrows())[-32:]: # df_dates_train_test.iterrows()
+    # i,r = list(df_dates_train_test.iterrows())[-40:]
     str_start_train, str_end_train, str_start_test, str_end_test = r
     # data split
-    data_train, data_test = sliceDataFrame(data, 
+    data_train, data_test = sliceDataFrame(modeldata, 
                                            dt_start=str_start_train, 
                                            dt_end=str_end_train, 
-                                           lst_securities=tmplst),\
-        sliceDataFrame(data, 
+                                           lst_securities=tmplst2),\
+        sliceDataFrame(modeldata, 
                        dt_start=str_start_test, 
                        dt_end=str_end_test,
-                      lst_securities=tmplst)
+                      lst_securities=tmplst2)
+    # data sets mgmt
+    if str_end_test in data_test.index:
+        data_test = data_test.drop(str_end_test)
     # explanatory split
-    X_train, X_test = data_train.drop(y_name, axis=1),\
-        data_test.drop(y_name, axis=1)
-    # response split
-    y_train, y_test = data_train[y_name], data_test[y_name]
+    if y_name in data_train:
+        X_train, X_test = data_train.drop(y_name, axis=1),\
+            data_test.drop(y_name, axis=1)
+        # response split
+        y_train, y_test = data_train[y_name], data_test[y_name]
+    else:
+        X_train, X_test = data_train, data_test
+        y_train, y_test = modeldata.loc[data_train.index,y_name], modeldata.loc[data_test.index,y_name]
+        
     # feature normalization
     sclr = StandardScaler()
     sclr.fit(X_train)
     # Model
-    n_comps = 3
+    n_comps = min_comps
     pca = PCA(n_components = n_comps)
     rgr = LinearRegression()
+    ###########################################################################
     # Model train
     pca_scores_train = pca.fit_transform(sclr.transform(X_train)) 
     rgr = LinearRegression()
@@ -213,20 +243,30 @@ for i,r in df_dates_train_test.iterrows():
     # save coeffs
     df_pcr_coefs.loc[i] = pcr.coef_.tolist()+[pcr.intercept_]
     # Trainning perf metrics
-    y_train_pred = pd.Series(pcr.predict(pca_scores_train), 
-                             index = y_train.index)
+    y_train_pred = pd.Series(pcr.predict(pca_scores_train), index = y_train.index)
     y_train_pred.rename('Model')
-    train_perf_metrics = rgr_perf_metrics(y_train, y_train_pred, 
-                                          'Train')
+    train_perf_metrics = rgr_perf_metrics(y_train, y_train_pred, 'Train')
     # Trainning errors
-    pcr_err = pd.DataFrame(pd.concat([y_train, y_train_pred.rename('Model')], 
-                                     axis=1)).diff(axis=1).dropna(axis=1)*-1
+    #init_levels = data.loc[data.loc[:str_start_train, y_name].index[-2]:str_end_train,y_name].shift().dropna()
+    if str_start_train in data.loc[:str_start_train].index:
+        m_levels_train = (pd.concat([y_train.cumsum()/100, 
+                                 y_train_pred.rename('Model').cumsum()/100], 
+                                axis=1).drop(str_start_train)+\
+                      data.loc[:str_start_train, y_name].iloc[-2])
+    else:
+        m_levels_train = (pd.concat([y_train.cumsum()/100, 
+                                 y_train_pred.rename('Model').cumsum()/100], 
+                                axis=1)+\
+                      data.loc[:str_start_train, y_name].iloc[-1])
+        
+    pcr_err = (y_train-y_train_pred).rename('Model')
+    pcr_err = m_levels_train.diff(axis=1).dropna(axis=1)*-1
     pcr_err_std = pcr_err.std()
     pcr_err_mu = pcr_err.mean()
     pcr_err_z = (pcr_err - pcr_err_mu)/pcr_err_std
     ## ADF test
     pcr_err_z_adft = adfuller(pcr_err_z)
-    
+    ###########################################################################
     # Model test
     pca_scores_test = pca.transform(sclr.transform(X_test))
     y_test_pred = pd.Series(pcr.predict(pca_scores_test), index=y_test.index)
@@ -235,9 +275,12 @@ for i,r in df_dates_train_test.iterrows():
     # Run performance met
     df_pcr_test_perf.loc[i] = test_perf_metrics.to_numpy().reshape(-1,)
     # Testing errors
-    model_err = pd.DataFrame(
-        pd.concat([y_test, y_test_pred.rename('Model')], axis=1)
-        ).diff(axis=1).dropna(axis=1)*-1
+    m_levels_test = pd.concat([y_test.cumsum()/100, 
+                             y_test_pred.rename('Model').cumsum()/100], 
+                            axis=1)+\
+                     data.loc[str_start_train:str_end_train, y_name].iloc[-1]
+    model_err = (y_test-y_test_pred).rename('Model')
+    model_err = m_levels_test.diff(axis=1).dropna(axis=1)*-1
     model_err_z  = (model_err - pcr_err_mu)/pcr_err_std
     
     ## Errors transform
@@ -261,12 +304,13 @@ for i,r in df_dates_train_test.iterrows():
                       'Signal'] = -1
     model_err_rsi.loc[model_err_signals_lb[model_err_signals_lb].index,
                       'Signal'] = 1
-    model_err_test_run = model_err_rsi.merge(y_test,
+    model_err_test_run = model_err_rsi.merge(m_levels_test[y_name],
                                              left_index=True,right_index=True)
     test_run_sl = np.max([np.round(pcr_err_std/2,2).values[0],
-                         np.round(y_train.diff().dropna().std(),2)])
+                         np.round(m_levels_train[y_name].diff().dropna().std(),2)])
     model_err_test_run['SL'] = model_err_test_run['Signal']*test_run_sl*-1 +\
         model_err_test_run[y_name]
+    model_err_test_run['Model'] = m_levels_test['Model']
     dic_pcr_run[i] = model_err_test_run
 ###############################################################################
 # MODEL EXPORT
@@ -295,6 +339,7 @@ with open(str_model_path, 'wb') as handle:
 # In[USE MODEL]
 def run_model_pcr(y_name):
     #y_name = 'TIIE2Y5Y' #y_name = 'TIIE1Y1Y'
+    m_data = data.diff()*100
     # model path
     str_model_path = 'H:\Python\hyperdrive_models'+rf'\pcr_{y_name}.pickle'
     # file verif
@@ -314,21 +359,28 @@ def run_model_pcr(y_name):
     # last data date
     data_last_date = data.index[-1]
     # new model run verif
-    isNewModRun = np.datetime64(data_last_date)>np.datetime64(test_ed)
+    isNewModRun = np.datetime64(data_last_date)>=np.datetime64(test_ed)
     ###########################################################################
     # NEW MODEL RUN
     if isNewModRun:
         n_new = n_last_studyperiod+1
         # new data split
+        if test_ed in data.loc[train_st:test_ed].index:
+            last_month_date_train = np.datetime64(data.loc[train_st:test_ed].index[-2].strftime("%Y-%m-%d"))
+        else:
+            last_month_date_train = np.datetime64(data.loc[train_st:test_ed].index[-1].strftime("%Y-%m-%d"))
         new_train_st, new_train_ed, new_test_st, new_test_ed = \
-            dt_delims_train_test(np.datetime64(test_ed),2,1)
+            dt_delims_train_test(last_month_date_train,2,1)
         # data split
-        new_data_train, new_data_test = sliceDataFrame(data, 
+        m_cols = model_dic['features'] + [model_dic['response']]
+        new_data_train, new_data_test = sliceDataFrame(m_data, 
                                                dt_start=new_train_st, 
-                                               dt_end=new_train_ed),\
-            sliceDataFrame(data, 
+                                               dt_end=new_train_ed,
+                                               lst_securities=m_cols),\
+            sliceDataFrame(m_data, 
                            dt_start=new_test_st, 
-                           dt_end=new_test_ed)
+                           dt_end=new_test_ed,
+                           lst_securities=m_cols)
         # explanatory-response variables
         X_train, X_test = new_data_train[model_dic['features']], \
             new_data_test[model_dic['features']]
@@ -346,15 +398,20 @@ def run_model_pcr(y_name):
         ## train
         y_train_pred = m_new.predict(X_train_pca_scores)
         ## test
+        y0_lev = data.loc[new_train_st:new_train_ed, model_dic['response']].iloc[-1]
         X_test_pca_scores = m_feat_redux.\
             transform(m_feat_transform.transform(X_test))
         y_test_pred = m_new.predict(X_test_pca_scores)
+        y_test_pred_lev = y0_lev + y_test_pred.cumsum()/100
+        y_test_lev = data.loc[new_test_st:new_test_ed, model_dic['response']]
+        m_curr_lev = pd.DataFrame([y_test_lev.values, y_test_pred_lev]).T.\
+            rename(columns={0:model_dic['response'],1:'Model'}).set_index(y_test_lev.index)
         ## errors
-        m_new_err = y_train - y_train_pred
+        m_new_err = y_train.cumsum() - y_train_pred.cumsum()
         m_new_err_mu = m_new_err.mean()
         m_new_err_std = m_new_err.std()
         m_new_err_z = (m_new_err - m_new_err_mu)/m_new_err_std
-        m_new_err_test = y_test-y_test_pred
+        m_new_err_test = y_test.cumsum()-y_test_pred.cumsum()
         m_new_err=m_new_err.append(m_new_err_test)
         m_new_err=m_new_err[~m_new_err.index.duplicated(keep='first')]
         ## rsi
@@ -374,7 +431,7 @@ def run_model_pcr(y_name):
                     tight_layout();plt.show()
         ## sl
         test_run_sl = np.max([np.round(m_new_err.std()/2,2),
-                             np.round(y_train.diff().dropna().std(),2)])
+                             np.round(y_train.std(),2)])/100
         ## signals
         tmp_rsi = m_new_rsi.shift().merge(m_new_rsi,how='left',
                                               left_index=True, 
@@ -393,12 +450,13 @@ def run_model_pcr(y_name):
                           'Signal'] = -1
         m_new_rsi.loc[tmp_rsi_signals_lb[tmp_rsi_signals_lb].index,
                           'Signal'] = 1
-        m_curr_err_run = m_new_rsi.merge(y_test, 
+        m_curr_err_run = m_new_rsi.merge(m_curr_lev[model_dic['response']], 
                                          left_index=True, right_index=True)
         m_curr_err_run['SL'] = m_curr_err_run['Signal']*test_run_sl*-1 +\
             m_curr_err_run[y_name]
         m_curr_err_run = \
             m_curr_err_run[~m_curr_err_run.index.duplicated(keep='first')]
+        m_curr_err_run['Model'] = m_curr_lev['Model']
         # add run to dictionary
         model_dic['hist_model_testruns'][n_new] = m_curr_err_run
         model_dic['feat_transform'] = m_feat_transform
@@ -416,23 +474,23 @@ def run_model_pcr(y_name):
         # save new run
         with open(str_model_path, 'wb') as handle:
             pickle.dump(model_dic, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        
+        #return None
     # update testruns
     m_curr_run_day = model_dic['hist_model_testruns'][n_last_studyperiod]
     m_last_busdayofmonth = np.busday_offset(
         last_day_of_month(m_curr_run_day.index[-1]),-1, roll='forward')
     # new observation verif
     isCurrRunFin = \
-        np.datetime64(m_curr_run_day.index[-1]) > m_last_busdayofmonth
+        np.datetime64(m_curr_run_day.index[-1].strftime("%Y-%m-%d")) > m_last_busdayofmonth
     ###########################################################################
     # UPDATE MODEL RUN
     if not isCurrRunFin:
         # train data
-        data_train = data.loc[train_st:train_ed,model_dic['features']]
-        y_train = data.loc[train_st:train_ed,model_dic['response']]
+        data_train = m_data.loc[train_st:train_ed,model_dic['features']]
+        y_train = m_data.loc[train_st:train_ed,model_dic['response']]
         # test data
-        data_test = data.loc[test_st:test_ed,model_dic['features']]
-        y_test = data.loc[test_st:test_ed,model_dic['response']]
+        data_test = m_data.loc[test_st:test_ed,model_dic['features']]
+        y_test = m_data.loc[test_st:test_ed,model_dic['response']]
         # data transform
         m_curr_feat_transform = model_dic['feat_transform']
         m_curr_feat_redux = model_dic['feat_redux']
@@ -445,9 +503,15 @@ def run_model_pcr(y_name):
         # model pred
         y_pred_train = m_curr.predict(X_train)
         y_pred_test = m_curr.predict(X_test)
+        # model level pred
+        y0_lev = data.loc[train_st:train_ed, model_dic['response']].iloc[-1]
+        y_pred_test_lev =  pd.Series(y0_lev + y_pred_test.cumsum()/100, 
+                                     index=y_test.index).rename('Model')
+        y_test_lev = y0_lev + y_test.cumsum()/100
+        m_curr_lev = pd.concat([y_test_lev, y_pred_test_lev], axis=1)
         # model err
-        m_curr_err_train = y_train - y_pred_train
-        m_curr_err_test = y_test - y_pred_test
+        m_curr_err_train = (y_train.cumsum() - y_pred_train.cumsum())
+        m_curr_err_test = (y_test.cumsum() - y_pred_test.cumsum())
         m_curr_err = m_curr_err_train.append(m_curr_err_test)
         m_curr_err_z = \
             (m_curr_err - m_curr_err_train.mean())/m_curr_err_train.std()
@@ -481,15 +545,16 @@ def run_model_pcr(y_name):
                           'Signal'] = -1
         m_curr_err_rsi.loc[tmp_rsi_signals_lb[tmp_rsi_signals_lb].index,
                           'Signal'] = 1
-        m_curr_err_run = m_curr_err_rsi.merge(y_test,
+        m_curr_err_run = m_curr_err_rsi.merge(m_curr_lev[model_dic['response']],
                                                  left_index=True,
                                                  right_index=True)
         test_run_sl = np.max([np.round(m_curr_err_train.std()/2,2),
-                             np.round(y_train.diff().dropna().std(),2)])
+                             np.round(y_train.std(),2)])/100
         m_curr_err_run['SL'] = m_curr_err_run['Signal']*test_run_sl*-1 +\
             m_curr_err_run[y_name]
         m_curr_err_run = \
             m_curr_err_run[~m_curr_err_run.index.duplicated(keep='first')]
+        m_curr_err_run['Model'] = m_curr_lev['Model']
         # update dictionary
         model_dic['hist_model_testruns'][n_last_studyperiod] = m_curr_err_run
         ## save update
@@ -499,9 +564,20 @@ def run_model_pcr(y_name):
     return m_curr_err_run
 
 # In[Model]
+# targets
+lvlist = ['TIIE3Y']
+flylist = ['T5s7s10s','T3s4s5s','T4s5s7s','T3s5s7s','T3s5s10s','T2s5s10s', 'T2s3s4s'] 
+sprdlist = ['T2s5s','T5s10s']
+fwdlist = ['TIIE1Y1Y', 'TIIE2Y1Y', 'TIIE2Y2Y', 'TIIE2Y5Y', 'TIIE5Y5Y', 'TIIE3Y1Y']
+fwdsprdlist = ['2Y1Y vs 3Y1Y', '3Y1Y vs 4Y1Y', '4Y1Y vs 5Y2Y', '3Y2Y vs 5Y2Y',
+               '3Y2Y vs 5Y5Y', '1Y1Y vs 2Y1Y', '2Y1Y vs 3Y2Y', '2Y2Y vs 3Y2Y']
 # Run Model
-y_name = 'TIIE2Y5Y'
+y_name = '2Y2Y vs 3Y2Y'
 run_model_pcr(y_name)
+
+# batch run
+for name in lvlist+fwdlist+sprdlist+flylist+fwdsprdlist:
+    print(run_model_pcr(name))
 ###############################################################################
 # Loadings visualization given new observations
 # Model Factors Attribution
@@ -516,31 +592,84 @@ n_last_studyperiod = model_dic['hist_model_studyperiods'].index[-1]
 train_st, train_ed, test_st, test_ed =\
     model_dic['hist_model_studyperiods'].loc[n_last_studyperiod]
 m_curr = model_dic['model']
-data_test = data.loc[test_st:test_ed,m_curr_feats]
+# current model test data - rate changes
+data_test = data.diff().loc[test_st:test_ed,m_curr_feats]*100
+if test_ed in data_test.index:
+    data_test = data_test.drop(test_ed)
+# current model PC attribution
 m_curr_factors = m_curr_feat_redux.\
                 transform(m_curr_feat_transform.\
                           transform(data_test))[-1,]
 m_curr_coef_attb = m_curr_factors*m_curr.coef_ 
-for i in range(3):
-    (m_curr.coef_[0]*(pd.DataFrame(m_curr_feat_redux.components_.T,
-                  columns=[f'PC{n}' for n in range(1,4)],
+## Factor Contribution
+m_redux_ncomps = m_curr_feat_redux.n_components_
+for i in range(m_redux_ncomps):
+    (m_curr.coef_[i]*(pd.DataFrame(m_curr_feat_redux.components_.T,
+                  columns=[f'PC{n}' for n in range(1,m_redux_ncomps+1)],
                   index=m_curr_feats)[f'PC{i+1}']\
          *pd.DataFrame(m_curr_feat_transform.transform(data_test),
                           columns=m_curr_feats).iloc[-1,:].T)).\
         plot.barh(title=f'Factor {i+1} ({m_curr_coef_attb[i]:.2f})', 
                   figsize=(10,9)).invert_yaxis();plt.show()
 # Current Model Run
-df_m_run = pd.concat([data.loc[test_st:test_ed,model_dic['response']], 
-           pd.DataFrame(m_curr.predict(m_curr_feat_redux.\
-                transform(m_curr_feat_transform.\
-                          transform(data_test))),
-                        index=data.loc[test_st:test_ed,
-                                       model_dic['response']].index,
+m_pred = m_curr.predict(m_curr_feat_redux.transform(m_curr_feat_transform.\
+                                                    transform(data_test)))
+m_curr_levels = data.loc[test_st:test_ed, model_dic['response']]
+if test_ed in m_curr_levels.index:
+    m_curr_levels = m_curr_levels.drop(test_ed)
+df_m_run = pd.concat([m_curr_levels, pd.DataFrame(data.loc[train_st:train_ed, 
+                                 model_dic['response']].iloc[-1] + \
+                        m_pred.cumsum()/100, index=data_test.index,
                         columns=['Model'])], axis=1)
 # Viusalize current model run
 rgr_perf_metrics(df_m_run[y_name], df_m_run['Model'], 'PCA Rgr Test Model')
 df_m_run.plot(style=['-','--'],color=['C0','orange']);plt.tight_layout();plt.show()
 ###############################################################################
+#%% Trend Analysis
+data_ta = pd.DataFrame()
+nes = 21
+nel = 64
+for name in data.columns:
+    # Short EMA
+    ssen = f'{name}_EMA_{nes}'
+    tmp_sema = data[name].rename('Close').to_frame().ta.ema(nes).rename(ssen)
+    
+    # Long EMA
+    slen = f'{name}_EMA_{nel}'
+    tmp_lema = data[name].rename('Close').to_frame().ta.ema(nel).rename(slen)
+    
+    # Trend strength
+    tmp_emadiff = (tmp_sema - tmp_lema)
+    tmp_strength = pd.Series('normal',index=tmp_emadiff.index)
+    tmp_strength[abs(tmp_emadiff) >= tmp_emadiff.std()] = 'strong'
+    tmp_strength[tmp_emadiff <= tmp_emadiff.std()/2] = 'weak'
+    
+    # Trend status; 5-EMA of the RoC of the EMA difference
+    tmp_status = tmp_emadiff.diff().rename('Close').to_frame().ta.ema(5)
+    
+    # Trend
+    data_ta[f'{name}_trend'] = tmp_emadiff.apply(np.sign)
+    data_ta[f'{name}_trend_strength'] = tmp_strength
+    data_ta[f'{name}_trend_status'] = tmp_status
+    
+# Check any assets TA
+name = 'USDMXN'
+namecol = [f'{name}_trend',f'{name}_trend_strength',f'{name}_trend_status']
+data_ta[namecol].iloc[-21:]
+
+# Filter out non-weak trends
+nonwTrends = []
+for name in data.columns:
+    # Trend strength
+    tmpcol = f'{name}_trend_strength'
+    if data_ta.iloc[-1][f'{name}_trend_strength'] == 'weak':
+        continue
+    else:
+        nonwTrends.append(name)
+
+# Non-weak Trending Assets
+data_ta.iloc[-1][[f'{c}_trend' for c in nonwTrends]]
+
 # In[PCR Test]
 # Proc to analyse PCR model testing runs
 trading_res_cols = ['run','signal','duration','pnl','R']
