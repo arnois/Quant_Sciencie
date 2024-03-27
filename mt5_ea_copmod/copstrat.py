@@ -77,6 +77,27 @@ str_file = r'\data_5m_y2023.xlsx'
 ###############################################################################
 # UDF
 ###############################################################################
+# Function to slice high time-granular dataframe by hour number limits
+def slice_HGDF(data: pd.DataFrame, hour_n1: int = 6, hour_n2: int = 15):
+    """
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame with dattime64[ns] index data type.
+    hour_n1 : int, optional
+        Lower bound hour digit. The default is 6.
+    hour_n2 : int, optional
+        Upper bound hour digit. The default is 15.
+
+    Returns
+    -------
+    Filtered data by hour bounds.
+    """
+    # Sections in index between hour_n1 and hour_n2
+    idx_fltrd = (data.index.hour<=hour_n2)*(data.index.hour>=hour_n1)
+    
+    return data[idx_fltrd]
+
 # Function to buildup database: import xl, export parquet
 def set_data_5m(str_path, str_file, str_shtname):
     """
@@ -125,11 +146,11 @@ def readParseData(str_path, str_file, str_shtname, n_skipRows):
                repls.get(s[s.find(' '):])) 
              for s in assetnames]
         )
-    
+    tmp_rows2skip = max(int(xlwb_rows-n_skipRows), 4)
     tmpdf = pd.read_excel(str_path+str_file,
                           sheet_name = str_shtname,
                           header=None, index_col=0,
-                          skiprows=int(xlwb_rows-n_skipRows))
+                          skiprows=tmp_rows2skip)
     tmpdf = tmpdf.fillna(method='ffill').dropna(axis=1)
     tmpdf.columns = tmpdf_head.iloc[1,:].dropna().drop(0)
     tmpdf = tmpdf.drop('Dates',axis=1)
@@ -476,6 +497,89 @@ def get_disabled_symbols(df):
             MetaTrader5.symbol_info(s)._asdict()['trade_mode']
     return [k for k, v in s_trade_mode.items() if v == 0]
 
+# Function to fit copula model throughout a whole year
+def model_train(tgt_y: str = 'USDMXN', n_year: int = 2022) -> dict:
+    # Data
+    str_dbpath = r"H:\db\data_5m.parquet"; data = pd.read_parquet(str_dbpath)
+    
+    # Filtered Data from 6 to 15
+    data = slice_HGDF(data,6,15)
+    
+    # OC returns
+    df_log_ret = get_df_ret(data.loc[str(n_year)])
+    
+    # ECDF from OC returns
+    df_ecdf = get_df_ret_ecdf(df_log_ret)
+    
+    # Uniform
+    df_U = df_log_ret.apply(lambda y: df_ecdf[y.name](y))
+    
+    # Target-Covariate Pairs
+    # # tgt_y = 'USDMXN'
+    names_posspairs = df_U.columns.drop(tgt_y)
+    n_posspairs = len(names_posspairs)
+    df_tgtPairs = pd.DataFrame(names_posspairs, 
+                               index=[tgt_y]*n_posspairs,
+                               columns=['y2'])
+    lst_tgtPairs = [[tgt_y,c] for c in df_tgtPairs['y2']]
+    
+    # Bivariate Copulas
+    tmpdic_copPairs = dict(
+        [(p[1], biCop.select_copula(df_U[p].to_numpy())) 
+         for p in lst_tgtPairs]
+        )
+    
+    # Association stats
+    pairsTau = pd.DataFrame([v.tau for k,v in tmpdic_copPairs.items()], 
+                 columns=['tau'], 
+                 index=tmpdic_copPairs.keys()).abs()
+    
+    # Mispricing indexes
+    tmpdf_pairsM = pd.DataFrame([
+        v.partial_derivative(df_U[[tgt_y,k]].to_numpy())-0.5 
+        for k,v in tmpdic_copPairs.items()
+        ]).T.fillna(method = 'ffill').cumsum().\
+        rename(columns=dict(
+            [(n,name) 
+             for n,name in zip(range(n_posspairs), 
+                               names_posspairs)
+            ]
+        ))
+    
+    # Stationarity stats
+    pairsM_adf = tmpdf_pairsM.apply(lambda y: adfuller(y)[0])
+    pairsM_adf_top5 = pairsM_adf.drop(
+        [s for s in pairsM_adf.index.tolist() if len(s) != 6]
+        ).sort_values()[:5]
+    
+    # Top 5 weights
+    tau_top5 = pairsTau.loc[pairsM_adf_top5.index.tolist()]
+    w = tau_top5/tau_top5.sum()
+    
+    # Weighted M
+    top_M = tmpdf_pairsM[w.index.tolist()].set_index(df_U.index)
+    
+    # Covariate selection
+    bestCovar = pairsM_adf_top5.index[0] # pairsTau[0]
+    bestPair = [tgt_y, bestCovar]
+    
+    # Model
+    selCop_dict = tmpdic_copPairs[bestCovar].to_dict()
+    selCop_M = tmpdf_pairsM[bestCovar].rename('M').to_frame().set_index(df_U.index)
+    selCop_ECDF = df_ecdf[[tgt_y]+w.index.tolist()]
+    cop_top5 = dict(zip(w.index.tolist(),
+                    [tmpdic_copPairs[s].to_dict() for s in w.index.tolist()]))
+    model = {'covar': bestCovar, 'cop': selCop_dict, 'M': selCop_M, 
+             'df_ecdfs': selCop_ECDF, 'w': tau_top5, 'top_M': top_M, 'topCovar': cop_top5}
+    
+    # Save
+    savepath = r'H:\Python\models'
+    str_modelname = savepath+f'\copmodel_{tgt_y}'+r'.pickle'
+    with open(str_modelname, 'wb') as f:
+        pickle.dump(model, f)
+    
+    return model
+
 # Function to fit copmodel given couple
 def copmodel_byCouple(symbol='USDMXN', timeframe='M5', couple='USDZAR'):
     # Selected pairs
@@ -561,7 +665,20 @@ def copmodel(symbol='USDMXN', timeframe='M5'):
     
     return model
 
-# Function to get real-time data for copmodel
+# Function to get multiple real-time data for copmodel
+def get_copmodel_hfdata_multiple(lst_y, timeframe):
+    # Timezone shift
+    hourshift = mt5_interface.get_timezone_shift_hour(lst_y[0])
+    
+    # Covariables data query from MT5
+    hfdata = mt5_interface.query_today_data(lst_y[0], timeframe, hourshift)
+    for y in lst_y[1:]:
+        tmp = mt5_interface.query_today_data(y, timeframe, hourshift)
+        hfdata = hfdata.merge(tmp, how='left', left_index =True, right_index=True)
+        
+    return hfdata
+
+# Function to get pairs of real-time data for copmodel
 def get_copmodel_hfdata(y1, y2, timeframe):
     # Timezone shift
     hourshift = mt5_interface.get_timezone_shift_hour(y1)
@@ -572,6 +689,57 @@ def get_copmodel_hfdata(y1, y2, timeframe):
     hfdata = hfdata_y1.merge(hfdata_y2, how='left', 
                              left_index =True, right_index=True)
     return hfdata
+
+# Function to run weighted model on given variables and its respective data
+def get_copmodel_run_w(symbol, timeframe, model):
+    # Covariates
+    covars = model['w'].index.tolist()
+    
+    # Copulas load
+    dict_cops = {}
+    for name in covars:
+        dict_cops[name] = biCop.Bivariate.from_dict(model['topCovar'][name])
+    
+    # ECDFs
+    df_trva_r_ecdf = model['df_ecdfs']
+
+    # Test data
+    lst_y = df_trva_r_ecdf.index.tolist()
+    hfdata = get_copmodel_hfdata_multiple(lst_y, timeframe)
+    
+    # Test-set uniform data
+    df_test_r = get_df_ret(hfdata)
+    df_test_r_u = df_test_r.apply(lambda y: df_trva_r_ecdf[y.name](y))
+    covars = df_test_r_u.columns.tolist(); covars.remove(symbol)
+    
+    # Conditional cdfs
+    mpxidx_test = pd.DataFrame(columns=covars)
+    for cov in covars:
+        cop = dict_cops[cov]
+        cop_cprob = cop.partial_derivative(df_test_r_u[[symbol, cov]].to_numpy())
+        mpxidx_test[cov] = cop_cprob
+    
+    # Mispricing indexes
+    mpxidx_test = mpxidx_test - 0.5
+    mpxidx_test = mpxidx_test.cumsum(axis=1)
+    
+    # Weighted Mispricing Index (WMI)
+    taus = model['w'].loc[covars]
+    w = taus/taus.sum()
+    mpxidx_test = mpxidx_test.dot(w).\
+        set_index(df_test_r_u.index).rename(columns={'tau':'M'})
+    
+    # Trainset WMI
+    train_M = model['top_M'][covars].dot(w).rename(columns={'tau':'M'})
+    
+    # TI applied to Mt
+    df_M = train_M.append(mpxidx_test[['M']])
+    df_M.ta.rsi(close='M', length=9, suffix='M', append=True)
+    df_run = df_M.copy()
+    df_run = df_run.merge(hfdata[[symbol+'_C']], 
+                          left_index = True, right_index = True)
+    
+    return df_run
 
 # Function to run model on given variables and its respective data
 def get_copmodel_run(symbol, timeframe, model):
@@ -771,6 +939,7 @@ def readParseHFData(str_path, str_file, str_shtname):
                repls.get(s[s.find(' '):])) 
              for s in assetnames]
         )
+    names = np.array([s.replace('2','1') for s in names])
     # Import data from external excel spreadsheet
     tmpdf = pd.read_excel(str_path+str_file,
                           sheet_name = str_shtname,
@@ -799,9 +968,10 @@ def readParseHFData(str_path, str_file, str_shtname):
     df_cols = []
     for name in names:
         df_cols = df_cols + [name+'_'+t for t in ['O', 'H', 'L', 'C']]
-    tmpdf.columns = df_cols
+    
     tmpdf.index.name = 'date'
-
+    tmpdf.columns = df_cols
+    
     return(tmpdf)
 
 # Function to compute OC returns
@@ -873,6 +1043,21 @@ def strategy_one(symbol, models, str_path, filename):
 def strategy_one_mt5(symbol, timeframe, model, pip_size, lots):
     # Model run
     df_run = get_copmodel_run(symbol, timeframe, model)
+    # Display run
+    print_copmodel_run(df_run)
+    
+    # Decision making
+    assess_copmodel_run(df_run, symbol, timeframe, pip_size, lots)
+    
+    # Plot mispricing index
+    plot_copmodel_Mt(df_run, model['covar'])
+    
+    return "Completed"
+
+# Function to articualate strategy via MT5 data feed
+def strategy_wM_mt5(symbol, timeframe, model, pip_size, lots):
+    # Model run
+    df_run = get_copmodel_run_w(symbol, timeframe, model)
     # Display run
     print_copmodel_run(df_run)
     

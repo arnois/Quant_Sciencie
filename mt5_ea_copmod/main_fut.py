@@ -17,6 +17,8 @@ import sys
 sys.path.append(r'H:\Python\mt5_ea_copmod\\')
 import copstrat
 import xlwings as xw
+import pandas as pd
+import numpy as np
 ###############################################################################
 # GLOBVARS
 ###############################################################################
@@ -28,7 +30,7 @@ str_modelname = r'H:\Python\models\copmodels_'+r'w'+str(week)+r'.pickle'
 # Control
 stop_hour = 14
 # Futures names
-futures = ['ES1', 'NQ1']
+futures = ['ES1', 'NQ1', 'RTY1']
 ###############################################################################
 # UDF
 ###############################################################################
@@ -46,18 +48,21 @@ def fetch_xlBook(str_file):
             print(f'{str_file} not in {pid} XL session')
     
     return xl_pid, wb
+    
 ###############################################################################
 # Init Models
-###############################################################################
+###############################################################################   
 # Trading Week Init
 def init_models():
     datapath, dataname, savepath = r'H:\db', 'data_5m', r'H:\Python\models'
-    str_file = r'\data_5m_y2023.xlsx'
-    symbols = ['NQ1','ES1','TU1','FV1','TY1','RX1','CL1','GC1','USDMXN']
+    str_file = r'\data_5m_y2024.xlsx'
+    symbols = ['NQ1','ES1','TU1','FV1','TY1','RX1','CL1','GC1','USDMXN', 'RTY1']
     n_skipRows = 2e4
     str_dbpath = r"H:\db\data_5m.parquet"
+    # Update Data 
     copstrat.update_data_5m(str_path, str_file, 'data', 
                             n_skipRows, str_dbpath)
+    # Retrain Models
     copstrat.bulkset_copmodel_5M_fromDotParquet(datapath, dataname, 
                                                 symbols, savepath)
 ###############################################################################
@@ -84,7 +89,7 @@ if __name__ == '__main__':
         today_hour = copstrat.get_session_hour()
         # Run program
         copstrat.main_algotrade(feedpath = str_path, feedname = filename,
-                                futures = ['ES1', 'NQ1'],
+                                futures = futures,
                                 models = models, wb = wb)
         # Waiting till next new candle
         n_secs2wait1 = min(abs(copstrat.time2wait_M5().seconds+6),300)

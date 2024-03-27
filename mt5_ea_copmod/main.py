@@ -95,11 +95,18 @@ if __name__ == '__main__':
     mt5_interface.initialize_symbols(project_settings["symbols"])
     # Select symbol to run strategy on
     symbol_for_strategy = project_settings['symbols'][0]
-    # Get copula model to use
+    
+    # Set Trading Model
+    ### Copula model by association tests
     #model = copstrat.copmodel(symbol_for_strategy, 
     #                          project_settings['timeframe'])
+    ### Copula model by manual selection
     model = copstrat.copmodel_byCouple(symbol_for_strategy, 
-                              project_settings['timeframe'])
+                              project_settings['timeframe'],'AUDUSD')
+    ### Copula model by prev-trained model
+    #path_model = r'H:\Python\models\copmodel_USDMXN.pickle'
+    #model = copstrat.pd.read_pickle(path_model)
+    
     # Set up a previous time variable
     previous_time = 0
     # Set up a current time variable
@@ -139,13 +146,19 @@ if __name__ == '__main__':
             # Cancel orders
             for order in orders:
                 mt5_interface.cancel_order(order)
+            
             # CopMod strategy on selected symbol
-            copstrat.strategy_one_mt5(symbol_for_strategy, 
-                                      project_settings['timeframe'], 
-                                      model, 
-                                      project_settings['pip_size'], 
-                                      lot_size
-                                      )
+            #copstrat.strategy_one_mt5(symbol_for_strategy, 
+            #                          project_settings['timeframe'], 
+            #                          model, 
+            #                          project_settings['pip_size'], 
+            #                          lot_size)
+            # GreenWolf Strategy - CopMod on wiegthed M
+            copstrat.strategy_wM_mt5(symbol_for_strategy, 
+                                     project_settings['timeframe'], 
+                                     model, 
+                                     project_settings['pip_size'], 
+                                     lot_size)
         else:
             # Get positions
             positions = mt5_interface.get_open_positions()
