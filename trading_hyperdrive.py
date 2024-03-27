@@ -52,7 +52,8 @@ from udf_trading_hyperdrive import *
 str_path = r'H:\db'
 str_file = r'\data_1D.csv'
 data = csvImport(str_path, str_file)
-# data.columns[:300]
+updtc = ['TIIE1Y1Y','TIIE2Y1Y','TIIE2Y5Y','TIIE5Y5Y','TIIE3Y1Y','TIIE2Y2Y','TIIE3Y2Y','TIIE4Y1Y','TIIE5Y2Y']
+# data.columns[:300] # data.loc['2024-03-26',updtc] = [8.8560,8.0539,8.2149,8.6350,8.0282,8.0415,8.1043,8.1867,8.4508]
 ###############################################################################
 # Features
 ###############################################################################
@@ -572,7 +573,7 @@ fwdlist = ['TIIE1Y1Y', 'TIIE2Y1Y', 'TIIE2Y2Y', 'TIIE2Y5Y', 'TIIE5Y5Y', 'TIIE3Y1Y
 fwdsprdlist = ['2Y1Y vs 3Y1Y', '3Y1Y vs 4Y1Y', '4Y1Y vs 5Y2Y', '3Y2Y vs 5Y2Y',
                '3Y2Y vs 5Y5Y', '1Y1Y vs 2Y1Y', '2Y1Y vs 3Y2Y', '2Y2Y vs 3Y2Y']
 # Run Model
-y_name = '2Y2Y vs 3Y2Y'
+y_name = 'TIIE2Y2Y'
 run_model_pcr(y_name)
 
 # batch run
