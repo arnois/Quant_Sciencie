@@ -17,7 +17,7 @@ import statsmodels.api as sm
 from statsmodels.regression.rolling import RollingOLS
 from sklearn.mixture import GaussianMixture as GM
 
-#%% DATA
+#%% DATA FROM ZERO
 data = pd.read_excel(r'H:\db\RiskFactors.xlsx', sheet_name='data', skiprows=4)
 lst_cols = data.columns.tolist()
 lst_cols[0] = 'Date'
@@ -29,6 +29,30 @@ dxy = dxy.rename(columns={'t':'Date'}).set_index('Date', drop=True)
 # dataset
 df = data.merge(dxy[['USDFX']], left_index=True, right_index=True)
 df = df.astype(float)
+df_ret = df.apply(np.log).diff()
+# dataset save
+savepath = r'H:\db\dataset_risk_factors.parquet'
+df.to_parquet(savepath)
+
+#%% DATA
+# factors dataset update
+tmpdf = pd.read_parquet(savepath)
+newdata = pd.read_excel(r'H:\db\RiskFactors.xlsx', sheet_name='data', skiprows=4)
+lst_cols = newdata.columns.tolist(); lst_cols[0] = 'Date'; newdata.columns = lst_cols
+newdata = newdata.drop(0).set_index('Date', drop=True)
+# dxy dataset update
+newdxy = pd.read_excel(r'H:\db\RiskFactors_DXY.xlsx', sheet_name='index')
+newdxy = newdxy.rename(columns={'t':'Date'}).set_index('Date', drop=True)
+newdata = newdata.merge(newdxy[['USDFX']], left_index=True, right_index=True)
+newdata = newdata.astype(float)
+# whole dataset update
+isNewData2Update = newdata.index[-1] >= tmpdf.index[-1]
+if isNewData2Update:
+    last_date_df = tmpdf.index[-1]
+    pd.concat([tmpdf, newdata[last_date_df:]]).\
+        reset_index().drop_duplicates('Date').set_index('Date').to_parquet(savepath)
+# data import
+df = pd.read_parquet(savepath)
 df_ret = df.apply(np.log).diff()
 #%% UDF
 def roll_resid(y:pd.DataFrame, X:pd.DataFrame, w: int=252) -> pd.Series:
@@ -75,9 +99,7 @@ def plot_corrmatrix(df: pd.DataFrame, plt_size: tuple = (10,8),
     Returns: 
         Correlation matrix among series.
     """
-    # transform
-    #df_ = pd.DataFrame(StandardScaler().fit_transform(df))
-    #df_ = pd.DataFrame(Normalizer().fit_transform(df))
+    # data
     df_ = df.copy()
     # corrmatrix
     plt.figure(figsize=plt_size)
@@ -196,7 +218,6 @@ plt.ylabel("Score"); plt.show()
 # thus measures how well the GMM works as a density estimator, not as how well
 # suits a clustering algo.
 gmm = GM(n_opt, random_state=13).fit(df_F_ret)
-pd.DataFrame(gmm.means_)
 labels = gmm.predict(df_F_ret)
 data_wclust = df_F.drop(df_F.index[0]).copy()
 data_wclust['c'] = labels
