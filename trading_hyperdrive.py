@@ -53,7 +53,7 @@ str_path = r'H:\db'
 str_file = r'\data_1D.csv'
 data = csvImport(str_path, str_file)
 updtc = ['TIIE1Y1Y','TIIE2Y1Y','TIIE2Y5Y','TIIE5Y5Y','TIIE3Y1Y','TIIE2Y2Y','TIIE3Y2Y','TIIE4Y1Y','TIIE5Y2Y']
-# data.columns[:300] # data.loc['2024-03-26',updtc] = [8.8560,8.0539,8.2149,8.6350,8.0282,8.0415,8.1043,8.1867,8.4508]
+# data.columns[:300] # data.loc['2024-04-02',updtc] = [9.08, 8.245, 8.4, 8.80, 8.27, 8.2575, 8.305, 8.343, 8.62]
 ###############################################################################
 # Features
 ###############################################################################
@@ -61,6 +61,7 @@ updtc = ['TIIE1Y1Y','TIIE2Y1Y','TIIE2Y5Y','TIIE5Y5Y','TIIE3Y1Y','TIIE2Y2Y','TIIE
 ## spreads
 data['T5s7s10s'] = (2*data['TIIE7Y']-data['TIIE5Y']-data['TIIE10Y'])*100
 data['T5s10s'] = (data['TIIE10Y']-data['TIIE5Y'])*100
+data['T4s5s'] = (data['TIIE5Y']-data['TIIE4Y'])*100
 data['T2s5s'] = (data['TIIE5Y']-data['TIIE2Y'])*100
 data['T2s3s4s'] = (2*data['TIIE3Y']-data['TIIE2Y']-data['TIIE4Y'])*100
 data['T2s5s10s'] = (2*data['TIIE5Y']-data['TIIE2Y']-data['TIIE10Y'])*100
@@ -199,7 +200,7 @@ df_pcr_test_perf = pd.DataFrame(columns=['Exp.Var','Max Err','MAE',
                                          'MSE','RMSE','R2Score','MAPE'])
 dic_pcr_run = {}
 # response variable
-y_name = '2Y2Y vs 3Y2Y' # 3Y1Y vs 4Y1Y, 4Y1Y vs 5Y2Y, 3Y2Y vs 5Y2Y, 3Y2Y vs 5Y5Y
+y_name = 'T4s5s' # 3Y1Y vs 4Y1Y, 4Y1Y vs 5Y2Y, 3Y2Y vs 5Y2Y, 3Y2Y vs 5Y5Y
 # Dates delimiters for train-test data split
 df_dates_train_test = get_train_test_split_dates(data,2,1,1)
 # Loop through study periods
@@ -568,12 +569,13 @@ def run_model_pcr(y_name):
 # targets
 lvlist = ['TIIE3Y']
 flylist = ['T5s7s10s','T3s4s5s','T4s5s7s','T3s5s7s','T3s5s10s','T2s5s10s', 'T2s3s4s'] 
-sprdlist = ['T2s5s','T5s10s']
-fwdlist = ['TIIE1Y1Y', 'TIIE2Y1Y', 'TIIE2Y2Y', 'TIIE2Y5Y', 'TIIE5Y5Y', 'TIIE3Y1Y']
+sprdlist = ['T2s5s','T4s5s','T5s10s']
+fwdlist = ['TIIE1Y1Y', 'TIIE2Y1Y', 'TIIE2Y2Y', 'TIIE2Y5Y', 'TIIE5Y5Y', 
+           'TIIE3Y1Y', 'TIIE3Y2Y', 'TIIE5Y2Y']
 fwdsprdlist = ['2Y1Y vs 3Y1Y', '3Y1Y vs 4Y1Y', '4Y1Y vs 5Y2Y', '3Y2Y vs 5Y2Y',
                '3Y2Y vs 5Y5Y', '1Y1Y vs 2Y1Y', '2Y1Y vs 3Y2Y', '2Y2Y vs 3Y2Y']
 # Run Model
-y_name = 'TIIE2Y2Y'
+y_name = 'TIIE5Y2Y'
 run_model_pcr(y_name)
 
 # batch run

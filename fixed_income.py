@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import datetime as dt
 import holidays
-
+import os
 #%% DATA IMPORT
 
 # Function to import zcb data from price vendor VALMER
@@ -20,10 +20,10 @@ def data_from_valmer_CETE(fpath: str = r'C:\Users\jquintero\Downloads',
         (pd.DataFrame) Characteristics for each CETE.
     """
     # File default name
-    fname = r'\Niveles_de_Valuacion_'
+    fname = r'\Resumen_de_Mercado_'
     
     # Whole file path 
-    path = fpath+fname+fdate+'.xlsx'
+    path = fpath+fname+fdate+'.xls'
         
     # File read
     tmpdf = pd.read_excel(path)
@@ -45,8 +45,9 @@ def data_from_valmer_CETE(fpath: str = r'C:\Users\jquintero\Downloads',
     df_cets.columns.rename('', inplace=True)
     
     # Data proc
-    df_cets.insert(1,'Mty',df_cets['Instrumento'].\
-                    apply(lambda c: dt.datetime.strptime(c[-6:],'%y%m%d')))
+    df_cets.insert(1,'Mty', df_cets['Dias X Vencer'].\
+                   apply(lambda c: dt.datetime.strptime(fdate, '%Y%m%d') + \
+                         dt.timedelta(days=c)))
     renamedic = {'Instrumento':'ID', 'Dias X Vencer': 'DTM', 'Hoy':'YTM'}
     df_cets = df_cets.rename(columns=renamedic)
     
@@ -66,10 +67,10 @@ def data_from_valmer_MBONO(fpath: str = r'C:\Users\jquintero\Downloads',
         (pd.DataFrame) Characteristics for each MBONO.
     """
     # File default name
-    fname = r'\Niveles_de_Valuacion_'
+    fname = r'\Resumen_de_Mercado_'
     
     # Whole file path 
-    path = fpath+fname+fdate+'.xlsx'
+    path = fpath+fname+fdate+'.xls'
     
     # Bond CPN rate by mty
     specs_path = r'H:\mbonos_specs.xlsx'
@@ -79,7 +80,11 @@ def data_from_valmer_MBONO(fpath: str = r'C:\Users\jquintero\Downloads',
     df_mbonospecs = df_mbonospecs[~df_mbonospecs[['Maturity']].duplicated()]
     
     # File read
-    tmpdf = pd.read_excel(path)
+    try:
+        tmpdf = pd.read_excel(path)
+    except:
+        path = fpath+fname+fdate+'.xlsx'
+        tmpdf = pd.read_excel(path)
     
     # Indexes of MBONOS loc
     r,c = np.where(tmpdf == 'Bonos de Tasa Fija (BONOS M)')
@@ -696,8 +701,9 @@ plt.show()
 """
 Lets get each MBONO Convexity
 """
-filedate = '20231205'
-df_mbono = data_from_valmer_MBONO(fdate=filedate)
+filedate = '20240110'
+strfilepath = r'\\tlaloc\cuantitativa\Fixed Income\File Dump\Valuaciones'
+df_mbono = data_from_valmer_MBONO(fpath=strfilepath, fdate=filedate)
 df_mbono[['P', 'modD', 'C']] = 0
 for i,r in df_mbono.iterrows():
     B0 = B(r['YTM'], settle_date, r['Maturity'], 182, 100, r['Coupon']/100, yearbase_conv)
@@ -716,7 +722,7 @@ df_mbono['chgP2'] = df_mbono.apply(lambda x:
     
     
 # CETEs
-df_cete = data_from_valmer_CETE(fdate=filedate)
+df_cete = data_from_valmer_CETE(fpath=strfilepath, fdate=filedate)
 df_cete['DTM'] = (df_cete['Mty'] - settle_date).apply(lambda x: x.days)
 df_cete[['P','modD', 'C']] = 0
 for i,r in df_cete.iterrows():
@@ -726,7 +732,29 @@ for i,r in df_cete.iterrows():
     D0 = (r['DTM']/360)/(1+r['YTM']*r['DTM']/36000)
     C = (Zp+Zm-2*Z0)/(Z0*0.0001**2)
     df_cete.loc[i,['P', 'modD', 'C']] = Z0,D0,C
+    
+#%% HISTORIC YTM DATA FROM VALMER
+path_hist = r'\\tlaloc\cuantitativa\Fixed Income\File Dump\Valuaciones'
+lst_dirhist = os.listdir(path_hist)
+lst_histfname = [s for s in lst_dirhist if 'Resumen_de_Mercado_' in s]
 
+# Pull data from each file
+dbmb = pd.DataFrame()
+for hfn in lst_histfname:
+    idx_pt = hfn.index('.')
+    idx_dtst = idx_pt-8
+    dt_str = hfn[idx_dtst:idx_pt]
+    dt_data = dt.datetime.strptime(dt_str, '%Y%m%d')
+    # Pull mbono data
+    tmpdf =  data_from_valmer_MBONO(fpath=strfilepath, fdate=dt_str)
+    tmpdf.insert(0,'Date',dt_data)
+    dbmb = pd.concat([dbmb, tmpdf])
+
+#%% HISTORIC YTM 
+stridmb = 'M_BONOS_290301'
+dbmb[dbmb['ID'] == stridmb].drop_duplicates(subset=['Date'], 
+                                            ignore_index=True).plot(x='Date',
+                                                                    y='YTM')
 
 #%% RATES TERM STRUCTURE
 
