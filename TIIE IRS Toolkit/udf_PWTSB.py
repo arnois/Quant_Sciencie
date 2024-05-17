@@ -14,8 +14,73 @@ import pandas as pd
 #%% GLOBALVARS
 tenor2ql = {'B':ql.Days,'D':ql.Days,'M':ql.Months,'W':ql.Weeks,'Y':ql.Years}
 futMty2Month = {'U': 9, 'Z': 12, 'H': 3, 'M': 6}
-#%% Piecewise Curve Builder Class
+#%% Convert Class
+# utility class for different QuantLib type conversions 
+class Convert:
+    # Convert date string 'yyyy-mm-dd' to QuantLib Date object
+    def to_date(s):
+        monthDictionary = {
+            '01': ql.January, '02': ql.February, '03': ql.March,
+            '04': ql.April, '05': ql.May, '06': ql.June,
+            '07': ql.July, '08': ql.August, '09': ql.September,
+            '10': ql.October, '11': ql.November, '12': ql.December
+        }
+        s = s.split('-')
+        return ql.Date(int(s[2]), monthDictionary[s[1]], int(s[0]))
+    
+    # convert string to QuantLib businessdayconvention enumerator
+    def to_businessDayConvention(s):
+        if (s.upper() == 'FOLLOWING'): return ql.Following
+        if (s.upper() == 'MODIFIEDFOLLOWING'): return ql.ModifiedFollowing
+        if (s.upper() == 'PRECEDING'): return ql.Preceding
+        if (s.upper() == 'MODIFIEDPRECEDING'): return ql.ModifiedPreceding
+        if (s.upper() == 'UNADJUSTED'): return ql.Unadjusted
+        
+    # convert string to QuantLib calendar object
+    def to_calendar(s):
+        if (s.upper() == 'TARGET'): return ql.TARGET()
+        if (s.upper() == 'UNITEDSTATES'): return ql.UnitedStates()
+        if (s.upper() == 'UNITEDKINGDOM'): return ql.UnitedKingdom()
+        # TODO: add new calendar here
+        
+    # convert string to QuantLib swap type enumerator
+    def to_swapType(s):
+        if (s.upper() == 'PAYER'): return ql.VanillaSwap.Payer
+        if (s.upper() == 'RECEIVER'): return ql.VanillaSwap.Receiver
+        
+    # convert string to QuantLib frequency enumerator
+    def to_frequency(s):
+        if (s.upper() == 'DAILY'): return ql.Daily
+        if (s.upper() == 'WEEKLY'): return ql.Weekly
+        if (s.upper() == 'MONTHLY'): return ql.Monthly
+        if (s.upper() == 'QUARTERLY'): return ql.Quarterly
+        if (s.upper() == 'SEMIANNUAL'): return ql.Semiannual
+        if (s.upper() == 'ANNUAL'): return ql.Annual
 
+    # convert string to QuantLib date generation rule enumerator
+    def to_dateGenerationRule(s):
+        if (s.upper() == 'BACKWARD'): return ql.DateGeneration.Backward
+        if (s.upper() == 'FORWARD'): return ql.DateGeneration.Forward
+        # TODO: add new date generation rule here
+
+    # convert string to QuantLib day counter object
+    def to_dayCounter(s):
+        if (s.upper() == 'ACTUAL360'): return ql.Actual360()
+        if (s.upper() == 'ACTUAL365FIXED'): return ql.Actual365Fixed()
+        if (s.upper() == 'ACTUALACTUAL'): return ql.ActualActual()
+        if (s.upper() == 'ACTUAL365NOLEAP'): return ql.Actual365NoLeap()
+        if (s.upper() == 'BUSINESS252'): return ql.Business252()
+        if (s.upper() == 'ONEDAYCOUNTER'): return ql.OneDayCounter()
+        if (s.upper() == 'SIMPLEDAYCOUNTER'): return ql.SimpleDayCounter()
+        if (s.upper() == 'THIRTY360'): return ql.Thirty360()
+
+    # convert string (ex.'USD.3M') to QuantLib ibor index object
+    def to_iborIndex(s):
+        s = s.split('.')
+        if(s[0].upper() == 'USD'): return ql.USDLibor(ql.Period(s[1]))
+        if(s[0].upper() == 'EUR'): return ql.Euribor(ql.Period(s[1]))
+
+#%% Piecewise Curve Builder Class
 class PiecewiseCurveBuilder_OIS:
     
     # Constructor
@@ -178,7 +243,7 @@ class PiecewiseCurveBuilder_OIS:
         
         return None
     
-###############################################################################
+#%%############################################################################
 # Create piecewise yield curve from swaps market
 class PiecewiseCurveBuilder_SWAP:
     def __init__(self, market_data: pd.DataFrame,
@@ -351,7 +416,7 @@ class PiecewiseCurveBuilder_SWAP:
         
         return None
     
-###############################################################################
+#%%############################################################################
 # Create piecewise yield term structure
 class PiecewiseCurveBuilder:
     def __init__(self, settleDays, calendar, dayCounter, crvDisc = None):
