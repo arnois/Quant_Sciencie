@@ -22,6 +22,7 @@ import udf_TIIE_Trading as fn
 import udf_TIIE_CurveCreate as udf
 import udf_TIIE_PfolioMgmt as udfp
 #print('Working in '+os.getcwd())
+
 #%%############################################################################
 # XL File
 ###############################################################################
@@ -135,15 +136,59 @@ def plot_curves_TIIE():
                        for s in pd.Series(crv_tiie).index]).plot()
     plt.tight_layout()
     plt.show()
+
+# Function to pull MXNOIS bootstrapped curve in discount factors
+def pull_curve_MXN(wb,strpath,str_type):
+    # Read curve data
+    tmpcrv = pd.read_excel(strpath)
+    # DF
+    tmpdf = (1/(1+tmpcrv['PLAZO']*tmpcrv['VALOR']/36000)).iloc[:10921].reset_index()
+    tmpdf['index'] = tmpdf['index']+1
+    # Print data
+    wb_df = wb.sheets('DF')
+    if str_type == 'OIS' :
+        wb_df.range('B4').value = tmpdf.values
+    elif str_type == 'TIIE':
+        wb_df.range('G4').value = tmpdf.values
+    else:
+        print('Curve type wrong. Try again!')
+    
+    return None
+
 #%%############################################################################
 # Trading Blotter File
 ###############################################################################
+# Function to adjust maturity dates for holidays
+def dt_adj_hday(dates: list) -> list:
+    """
+    Parameters
+    ----------
+    dates : (list) List of datetime dates.
+
+    Returns
+    -------
+    (list) List of ql.Date dates adjusted for holidays.
+    """
+    # Parse datetime to ql.Date
+    lst_dt = [ql.Date(x.day, x.month, x.year) for x in dates]
+    # Adjust for holidays
+    for dt in lst_dt:
+        if cal_mx.isHoliday(dt): 
+            lst_dt[lst_dt.index(dt)] = cal_mx.advance(dt,1,ql.Days)
+    
+    return lst_dt
+
 # Function to pull trading blotter data
 def pull_blotters(path_trading_blotter):
     # Get filename
     lst_files = glob.glob(path_trading_blotter)
     # Get trading data from filename
-    tmpdf1 = pd.read_excel(lst_files[0],'Blotter')
+    try:
+        tmpdf1 = pd.read_excel(lst_files[0],'Blotter')
+    except ValueError:
+        print('No trades yet.')
+        return None
+    
     tmpdf1 = tmpdf1[tmpdf1['Book']==1814]
     # tmpdf1['Start_Date'] = tmpdf1['Start_Date'].fillna(settle_date)
     # Start Date Mgmt
@@ -155,7 +200,8 @@ def pull_blotters(path_trading_blotter):
         [~tmp_loc_stdt_na]).apply(lambda x: settle_date+timedelta(days=28*x))
     # End Date Mgmt
     tmp_loc_edt_na = tmpdf1['End_Date'].isna()
-    tmpdf1['End_Date'][tmp_loc_edt_na] = (tmpdf1[tmp_loc_edt_na]).\
+    if tmp_loc_edt_na.any():
+        tmpdf1['End_Date'][tmp_loc_edt_na] = (tmpdf1[tmp_loc_edt_na]).\
         apply(lambda x: timedelta(days=28*x['Fwd_Tenor']) + x['Start_Date'], 
               axis=1)
     # Start/End Date String Format
@@ -172,7 +218,18 @@ def pull_blotters(path_trading_blotter):
         last_row = wb.sheets('Blotter').range('A1').end('down').row
     else:
         last_row = 1
-        
+    
+    # Check and separate own trades
+    dfblttr = wb.sheets('Blotter').range('A1').\
+        options(pd.DataFrame,header=1,index=True,expand='table').value
+    tmplt = dfblttr.index.to_frame().apply(lambda x: x['Trade_#'][:2], axis=1)
+    idx_ja = tmplt.to_numpy() == 'JA'
+    tmpIDs = dfblttr['ID']
+    dfblttr = dfblttr[idx_ja]
+    
+    # Clear contents
+    wb.sheets('Blotter').range('A2:P100').clear_contents()
+    
     # Data out
     tmpdf1 = tmpdf1.drop(['Book','Start_Tenor','Fwd_Tenor'],axis=1).fillna(0)
     start_row = last_row+1
@@ -181,6 +238,17 @@ def pull_blotters(path_trading_blotter):
             n = lst_flds.index(f)
             wb.sheets('Blotter').range('A1').offset(start_row-1,n).\
             value = tmpdf1[[f]].values
+    
+    # Paste back own trades
+    wb.sheets('Blotter').range('A1').end('down').\
+        offset(1,0).value = dfblttr.reset_index().to_numpy()
+        
+    wb.sheets('Blotter').range('M2').value = tmpIDs.to_numpy().reshape(-1,1)
+            
+    # Dates adjustment
+    #lrow = wb.sheets('Blotter').range('E2').end('down').row
+    #lst_dt = dt_adj_hday(wb.sheets('Blotter').range('E2:E'+str(lrow)).value)
+    #wb.sheets('Blotter').range('E2').value = [[x.serialNumber()] for x in lst_dt]
     
     return None
 
@@ -260,7 +328,7 @@ def fetch_blotter(filepath = r'E:\Blotters'):
 #%%############################################################################
 # Evaluation date
 ###############################################################################
-str_file = 'TIIE_IRS_Trading.xlsm'
+str_file = 'TIIE_IRS_Trading.xlsm'; str_file = 'TIIE_Trading.xlsx'
 parameters = pd.read_excel(str_cwd+r'\\'+str_file, 'Pricer', header=None)
 cal_mx = ql.Mexico()
 evaluation_date = pd.to_datetime(parameters.iloc[0,1]) 
@@ -279,12 +347,15 @@ settle_date = date(ql_settle_dt.year(),
 ###############################################################################
 # Dealer market screening file
 path_dmsf = r'\\tlaloc\cuantitativa\Fixed Income\TIIE IRS Valuation Tool\Arnua'
+path_dmsf = r'\\tlaloc\cuantitativa\Fixed Income\Arnulf'
+path_dmsf = r'U:\Fixed Income\Arnulf'
 name_dmsf = 'Corros_v2.1.xlsx'
 corros_file = path_dmsf + '\\' + name_dmsf
 
 # Trading blotter path
-path_trading_blotter = r'\\tlaloc\cuantitativa\Fixed Income'+\
-    r'\TIIE IRS Valuation Tool\Blotter'+r'\*J_'+ str(evaluation_date)[:4]+\
+
+path_trading_blotter =r'\\tlaloc\cuantitativa\Fixed Income\File Dump'+\
+    r'\Blotters\TIIE\Desk Blotters'+r'\*J_'+ str(evaluation_date)[:4]+\
         str(evaluation_date)[5:7]+str(evaluation_date)[8:10]+'.xlsx'
 # Markets
 input_sheets = ['USD_OIS', 'USD_SOFR', 
@@ -295,17 +366,27 @@ clr_orange_output = (253, 233, 217)
 xl_id, wb = fetch_xlBook(str_file)
 wb_pricing = wb.sheets('Pricer')
 wb_pxngfwds = wb.sheets('Fwds')
-rng_pricing = 'H4:K103'
+wb_tiie = wb.sheets('MXN_TIIE')
+rng_pricing = 'H4:K417'
 # Move to XL file path
 os.chdir(str_cwd)
 input_fxrate = wb_pricing.range('E1').value
 # Fixings
 banxico_TIIE28 = fn.get_fixings_TIIE28_banxico(evaluation_date)
 # Holidays
-hdays_mx = cal_mx.holidayList(ql_eval_dt-ql.Period(4*16,ql.Weeks),ql_eval_dt+ql.Period(4*133,ql.Weeks))
-hdays_us = ql.UnitedStates(0).holidayList(ql_eval_dt-ql.Period(4*16,ql.Weeks),ql_eval_dt+ql.Period(4*133,ql.Weeks))
+hdays_mx = cal_mx.holidayList(ql_eval_dt-ql.Period(4*16,ql.Weeks),ql_eval_dt+ql.Period(30,ql.Years))
+hdays_us = ql.UnitedStates(0).holidayList(ql_eval_dt-ql.Period(4*16,ql.Weeks),ql_eval_dt+ql.Period(30,ql.Years))
 wb.sheets('holidays').range('A2').value = [[t.serialNumber()] for t in hdays_mx]
 wb.sheets('holidays').range('B2').value = [[t.serialNumber()] for t in hdays_us]
+
+# T-1 Curves
+strpath_prevCrvs = r'\\tlaloc\cuantitativa\Fixed Income\File Dump\Historical OIS TIIE'
+strprevdt = cal_mx.advance(ql_eval_dt, -1, ql.Days).to_date().strftime('%Y%m%d')
+prevmxnois = r'\OIS_'+strprevdt+'.xlsx'
+prevmxntiie = r'\TIIE_'+strprevdt+'.xlsx'
+pull_curve_MXN(wb, strpath_prevCrvs+prevmxnois, 'OIS')
+pull_curve_MXN(wb, strpath_prevCrvs+prevmxntiie, 'TIIE')
+
 #%%############################################################################
 # MAIN
 ###############################################################################
@@ -347,7 +428,7 @@ if __name__ == '__main__':
                 for k,v in dic_cf.items():
                     v['TradeID'] = k
                     v['Notional'] = wb_pricing.range('H'+str(int(k+3))).value
-                    df_cfOTR = df_cfOTR.append(v)
+                    df_cfOTR = pd.concat([df_cfOTR, v]) # df_cfOTR.append(v)
                 wb.sheets('CF1').range('J:S').clear_contents()
                 df_cfOTR = df_cfOTR.sort_values(by='date')
                 wb.sheets('CF1').range('J2').value = df_cfOTR.columns.to_list()
@@ -402,7 +483,7 @@ if __name__ == '__main__':
             z = str(input('\nUpdate Carry? (Yes/No): ')[0]).lower()
             if z == 'y':
                 fn.proc_CarryCalc(ibor_tiie, tiie_swp_engine, 
-                                  str_cwd, str_file, wb)
+                                  str_cwd, str_file, wb)                
         elif user_option==4:
             # Pxng Fwds
             print('\nPricing Fwds... ')
@@ -466,7 +547,25 @@ if __name__ == '__main__':
                                     str_cwd, str_file, wb, rng_pricing)
         elif user_option==8:
             # End Session
-            proc_EndSession()  
+            proc_EndSession()
+        elif user_option == 9:
+            # Print bootstrapped curves
+            tmpdF_OIS, tmpdF_TIIE = [], []
+            for n in pd.Series(wb.sheets('DF').range('B4:B10924').value)/360:
+                tmpdF_OIS.append(crvMXNOIS.discount(n))
+                tmpdF_TIIE.append(crvTIIE.discount(n))
+            wb.sheets('DF').range('D4').value = pd.DataFrame(tmpdF_OIS).values
+            wb.sheets('DF').range('I4').value = pd.DataFrame(tmpdF_TIIE).values
+        elif user_option == 10:
+            # Compute cost rates
+            fn.proc_CostRates(ql_settle_dt, ibor_tiie, tiie_swp_engine, frCrvs, brCrvs,
+                             banxico_TIIE28, dic_data, str_cwd, str_file, 
+                             wb_pricing, wb_tiie)
+        elif user_option == 11:
+            # Compute bid-offer rates
+            fn.proc_BidOffer(ql_settle_dt, ibor_tiie, tiie_swp_engine, frCrvs, 
+                             brCrvs, banxico_TIIE28, dic_data, str_cwd, 
+                             str_file, wb_pricing, wb_tiie)
         else:
             # Continue
             continue
