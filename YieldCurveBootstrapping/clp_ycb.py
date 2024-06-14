@@ -118,7 +118,7 @@ df_mkt_clp = pd.DataFrame(zip(term, tenor),
              index=clpswpstkrs)
 
 # Eval. Date
-date_ql = ql.Date(13,6,2024)
+date_ql = ql.Date(14,6,2024)
 ql.Settings.instance().evaluationDate = date_ql
 str_evDate = date_ql.to_date().strftime('%Y-%m-%d')
 
@@ -183,6 +183,7 @@ clpHelpers = helpers_ON + zeroHelpers + swapHelpers
 
 # CLP Curve Bootstrapping
 crvCLP = ql.PiecewiseCubicZero(date_ql, clpHelpers, dc)
+crvCLP = ql.PiecewiseNaturalLogCubicDiscount(date_ql, clpHelpers, dc)
 crvCLP.enableExtrapolation()
 
 print_zero(date_ql, crvCLP)
@@ -195,27 +196,94 @@ ICP = ql.OvernightIndex("ICP",settlement_days_icp,ql.CLPCurrency(),cal_clp,dc,
 icp_swp_engine = ql.DiscountingSwapEngine(rYTS_CLP)
 
 # Mkt RepRicing
-dic_pmtFreq = {'Y':ql.Semiannual, 'M': ql.Annual}
 df_icp = pd.DataFrame()
+schdDates = []
+start = cal_clp.advance(date_ql, 2, ql.Days)
 for i,row in df_mkt_clp.drop('CHOVCHOV Index').iterrows():
     icp_tenor = ql.Period(int(row['Term']), int(row['qlTenor']))
-    icp_swap = ql.MakeOIS(swapTenor=icp_tenor, overnightIndex=ICP, 
-                          fixedRate=0.04, settlementDays=settlement_days_icp,
-                          paymentFrequency=dic_pmtFreq[row['Tenor']],
-                          paymentAdjustmentConvention=busAdj)
+    # end = cal_clp.advance(start, icp_tenor)
+    end = start + icp_tenor
+    pmtFreq = None
+    if row['qlTenor'] >= 3: pmtFreq = ql.Semiannual
+    qlSch = ql.MakeSchedule(start, start + icp_tenor, icp_tenor, pmtFreq, cal_clp)
+    schdDates += [list(qlSch.dates())]
+    icp_swap = ql.OvernightIndexedSwap(-1, 1e6, qlSch, 0.04, dc, ICP)
     icp_swap.setPricingEngine(icp_swp_engine)
     newDrow = [row.name, 100*icp_swap.fairRate()]
     df_icp = pd.concat([df_icp, pd.DataFrame(newDrow).T])
 df_icp.columns = ['0', 'Model']
 df_icp.index = df_mkt_clp.drop('CHOVCHOV Index').index
 df_icp = df_icp.drop('0', axis=1)
-df_icp.merge(df_mkt_clp, left_index=True, right_index=True)[[pd.Timestamp(str_evDate),'Model']]
+df_icp = df_icp.merge(df_mkt_clp, left_index=True, 
+                      right_index=True)[[pd.Timestamp(str_evDate),'Model']]
+df_icp.insert(0,'Tenor', df_mkt_clp.loc[df_icp.index].apply(lambda x: str(x['Term'])+x['Tenor'],axis=1))
+print('\n',df_icp)
+styles = ['-','--']
+xlabs = df_icp['Tenor']
+df_icp.plot(legend=None, style=styles)
+plt.xticks(range(xlabs.shape[0]), xlabs.tolist(), rotation=45)
+plt.legend(['Spot Mkt','Model']); plt.tight_layout();plt.show()
+
+# Market Quote
+tnrPer = ql.Period('1Y')
+sTnr = start + tnrPer
+eTnr = sTnr + tnrPer
+eTnr - start
+pFrq = None
+if (eTnr - start)/360 >= 2: pFrq = ql.Semiannual
+qteSch = ql.MakeSchedule(sTnr, eTnr, icp_tenor, pFrq, cal_clp)
+icp_swap = ql.OvernightIndexedSwap(-1, 100e6, qteSch, 0.04, dc, ICP)
+icp_swap.setPricingEngine(icp_swp_engine)
+icp_swpR = 100*icp_swap.fairRate()
         
-        
-        
-        
-        
-        
-        
-        
-        
+
+#%% CLP FORWARD CURVE
+
+# CLP 1M Forwards
+st = start
+df_clpFwd = pd.DataFrame()
+for n in range(120):
+    ed = st + ql.Period('1M')
+    fr = rYTS_CLP.forwardRate(st, ed, dc, ql.Compounded, ql.Daily).rate()
+    df_clpFwd = pd.concat([df_clpFwd,pd.DataFrame([st,ed,100*fr]).T])
+    st = ed
+df_clpFwd.reset_index(drop=True, inplace=True)
+df_clpFwd.columns=['Start','End','Rate']
+df_clpFwd.plot(x='End', y='Rate')
+df_clpFwd['Pricing'] = 100*(df_clpFwd['Rate'] -\
+                    df_mkt_clp.loc['CHOVCHOV Index',pd.Timestamp(str_evDate)])
+df_clpFwd.plot.bar(x='End', y='Pricing')
+
+# BCCE Pricing
+df_pmd = pd.read_excel(r'U:\Fixed Income\File Dump\Database\CBPMD.xlsx')
+bcce_dates = df_pmd[df_pmd['CLP'] >= pd.Timestamp(date_ql.to_date())]['CLP'].\
+    apply(lambda x: ql.Date(x.day,x.month,x.year)).\
+        apply(lambda x: cal_clp.advance(x, 2, ql.Days))
+df_bcce = pd.DataFrame()
+for d in bcce_dates:
+    d2 = cal_clp.advance(d, 1, ql.Days)
+    fr = rYTS_CLP.forwardRate(d, d2, dc, ql.Compounded, ql.Daily).rate()
+    df_bcce = pd.concat([df_bcce,pd.DataFrame([d.to_date(),d2.to_date(),100*fr]).T])
+df_bcce.columns = ['Start','End','Rate']
+df_bcce['Pricing'] = 100*(df_bcce['Rate'] -\
+                    df_mkt_clp.loc['CHOVCHOV Index',pd.Timestamp(str_evDate)])
+df_bcce['IncPric'] = df_bcce['Pricing'] - df_bcce['Pricing'].shift().fillna(0)
+df_bcce.index=df_pmd[df_pmd['CLP'] >= pd.Timestamp(date_ql.to_date())]['CLP'].rename('Date')
+## adjusting fwd rates wit more than 1 day compounded
+df_bcce['Pricing'] = 100*(df_bcce.\
+    apply(lambda x: ((1+x['Rate']*(x['End']-x['Start']).days/36000)**\
+                     (1/((x['End']-x['Start']).days))-1)*36000, axis=1) -\
+        df_mkt_clp.loc['CHOVCHOV Index',pd.Timestamp(str_evDate)])
+df_bcce['IncPric'] = df_bcce['Pricing'] - df_bcce['Pricing'].shift().fillna(0)
+# Plot
+from matplotlib.dates import DateFormatter
+date_form = DateFormatter("%Y-%b")
+fig, ax = plt.subplots()
+ax.bar(x=df_bcce.index, height=df_bcce['IncPric'], width=25, align='center')
+ax.xaxis.set_major_formatter(date_form)
+ax.figure.autofmt_xdate()
+plt.title('BCCE Inc. Pricing')
+plt.tight_layout(); plt.show()
+
+
+
