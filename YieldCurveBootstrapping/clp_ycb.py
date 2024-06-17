@@ -118,7 +118,7 @@ df_mkt_clp = pd.DataFrame(zip(term, tenor),
              index=clpswpstkrs)
 
 # Eval. Date
-date_ql = ql.Date(14,6,2024)
+date_ql = ql.Date(17,6,2024)
 ql.Settings.instance().evaluationDate = date_ql
 str_evDate = date_ql.to_date().strftime('%Y-%m-%d')
 
@@ -252,7 +252,6 @@ df_clpFwd.columns=['Start','End','Rate']
 df_clpFwd.plot(x='End', y='Rate')
 df_clpFwd['Pricing'] = 100*(df_clpFwd['Rate'] -\
                     df_mkt_clp.loc['CHOVCHOV Index',pd.Timestamp(str_evDate)])
-df_clpFwd.plot.bar(x='End', y='Pricing')
 
 # BCCE Pricing
 df_pmd = pd.read_excel(r'U:\Fixed Income\File Dump\Database\CBPMD.xlsx')
@@ -284,6 +283,6 @@ ax.xaxis.set_major_formatter(date_form)
 ax.figure.autofmt_xdate()
 plt.title('BCCE Inc. Pricing')
 plt.tight_layout(); plt.show()
-
+print(df_bcce.iloc[:5])
 
 
