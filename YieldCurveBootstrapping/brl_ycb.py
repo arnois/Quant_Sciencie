@@ -11,7 +11,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 #%% GLOBALVARS
 tenor2ql = {'B':ql.Days,'D':ql.Days,'M':ql.Months,'W':ql.Weeks,'Y':ql.Years}
-futMty2Month = {'U': 9, 'Z': 12, 'H': 3, 'M': 6}
+futMty2Month = {'F':1, 'G':2, 'J':4, 'K':5, 'N':7, 'Q':8, 
+                'U': 9, 'V':10, 'X':11, 'Z': 12, 'H': 3, 'M': 6}
 #%% CONVERT CLASS
 # utility class for different QuantLib type conversions 
 class Convert:
@@ -102,129 +103,128 @@ def print_zero(date,yieldcurve):
     datatable = {'Dates':dates,'Years': tenors,'DF':df,'Zero': spots}
     datatable = pd.DataFrame.from_dict(datatable)
     print(datatable)
+#%% WORKING DIRECTORY
+import os
+rsc_path = os.getcwd()+r'\resources'
+if not os.path.exists(rsc_path):
+    # Current working path
+    cwdp = os.getcwd()
+    rsc_path = cwdp + r'\resources'
 
 #%% BRL SWAPS YCB
+cal_brl = ql.Brazil(0)
 
 # BRL Swaps Market Tickers
-copswpstkrs = ['COOVIBR Index','CLSWIBA BGN Curncy','CLSWIBC BGN Curncy','CLSWIBF BGN Curncy',
-        'CLSWIBI BGN Curncy','CLSWIB1 BGN Curncy','CLSWIB1F BGN Curncy','CLSWIB2 BGN Curncy',
-        'CLSWIB3 BGN Curncy','CLSWIB4 BGN Curncy','CLSWIB5 BGN Curncy','CLSWIB6 BGN Curncy',
-        'CLSWIB7 BGN Curncy','CLSWIB8 BGN Curncy','CLSWIB9 BGN Curncy','CLSWIB10 BGN Curncy',
-        'CLSWIB12 BGN Curncy','CLSWIB15 BGN Curncy','CLSWIB20 BGN Curncy']
-term = [1,1,3,6,9,12,18,2,3,4,5,6,7,8,9,10,12,15,20]
-tenor = ['D','M','M','M','M','M','M','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y']
-df_mkt_cop = pd.DataFrame(zip(term, tenor),
-             columns = ['Term','Tenor'], 
-             index=copswpstkrs)
+brlswpstkrs = ['BZDIOVRA Index']+[f'OD{n+1} Comdty' for n in range(39)]
+df_mkt_ = pd.DataFrame(None, columns = ['CTCode','Term','Tenor'], 
+             index=brlswpstkrs)
 
 # Eval. Date
 date_ql = ql.Date(21,6,2024)
+date_ts = date_ql.to_date()
 ql.Settings.instance().evaluationDate = date_ql
 str_evDate = date_ql.to_date().strftime('%Y-%m-%d')
 
 # Spot Curve
-dbpath = r'U:\Fixed Income\File Dump\Database\db_Curves_mkt.xlsx'
+dbpath = rsc_path+r'\db_Curves_mkt.xlsx'
 dfdb = pd.read_excel(dbpath, 'bgnPull',skiprows=3)
+ct_codes = dfdb.loc[0][df_mkt_.index]
 dfdb = dfdb.drop([0,1]).set_index('Date')
-df_mkt_cop = df_mkt_cop.merge(dfdb.loc[str_evDate, copswpstkrs], 
+df_mkt_ = df_mkt_.merge(dfdb.loc[str_evDate, brlswpstkrs], 
                               left_index=True, right_index=True)
-df_mkt_cop['qlTenor'] = df_mkt_cop['Tenor'].map(tenor2ql).values
+df_mkt_['CTCode'] = ct_codes
+
+df_mkt_['Term'] = df_mkt_.drop('BZDIOVRA Index').\
+    apply(lambda x: pd.tseries.offsets.BMonthEnd().\
+          rollforward(pd.Timestamp(day=1,
+                                   month=futMty2Month[x['CTCode'][2]],
+                                   year=2000+int(x['CTCode'][-2:])).date()), 
+          axis=1)
+
+df_mkt_.loc['BZDIOVRA Index', 'Term'] = pd.Timestamp(
+    year=cal_brl.advance(date_ql,ql.Period('1D')).year(),
+    month=cal_brl.advance(date_ql,ql.Period('1D')).month(),
+    day=cal_brl.advance(date_ql,ql.Period('1D')).dayOfMonth())
+
+## dates to qlDate
+df_mkt_['Term'] = df_mkt_['Term'].apply(lambda x: ql.Date(x.day, x.month, x.year))
+
+## Bussiness days
+df_mkt_['Tenor'] = df_mkt_['Term'].apply(lambda x: cal_brl.businessDaysBetween(date_ql, x))
 
 # Curve conventions
-cal_cop = ql.Brazil(0)
 dc = ql.Business252()
-settleDays = 2
+settleDays = 1
 fixingDays = 0
 busAdj = ql.ModifiedFollowing
 eom = False
 pmtFreq = None # Zero-Coupon
 
 # Reference index
-IBR = ql.OvernightIndex("IBR",settleDays,ql.COPCurrency(),cal_cop,dc)
+CDI = ql.OvernightIndex("CDI",settleDays,ql.BRLCurrency(),cal_brl,dc)
 # ON Market
-onMkt = df_mkt_cop.loc['COOVIBR Index']
+onMkt = df_mkt_.loc['BZDIOVRA Index']
 # Bullet Market
-zMkt = df_mkt_cop[df_mkt_cop['qlTenor']<3].drop('COOVIBR Index')
-# Coupon Market
-cMkt = df_mkt_cop[df_mkt_cop['qlTenor']>=3]
+zMkt = df_mkt_.drop('BZDIOVRA Index')
+
 
 # Helpers for 0-1 Days
 ql_TPM = ql.QuoteHandle(ql.SimpleQuote(onMkt[pd.Timestamp(str_evDate)]/100))
-ql_term = onMkt['Term']
-ql_tenor = onMkt['qlTenor']
-helpers_ON = [ql.DepositRateHelper(ql_TPM, 
-                                ql.Period(int(onMkt['Term']), int(onMkt['qlTenor'])), 
-                                fixingDays, cal_cop, busAdj, eom, dc)]
+helpers_ON = [ql.DepositRateHelper(ql_TPM, ql.Period('1D'), fixingDays, cal_brl, busAdj, eom, dc)]
 
-# Helpers for 1-18 Months
+# Helpers for ZCSwaps
 zeroHelpers = []
+sdt_dt = pd.tseries.offsets.BMonthBegin().rollback(zMkt.iloc[0]['Term'].to_date())
+sdt = ql.Date(sdt_dt.day, sdt_dt.month, sdt_dt.year)
 for i,r in zMkt.iterrows():
-    qlQte = ql.QuoteHandle(ql.SimpleQuote(r[pd.Timestamp(str_evDate)]/100))
-    qlPer = ql.Period(int(r['Term']), int(r['qlTenor']))
-    zeroHelpers += [ql.DepositRateHelper(qlQte, qlPer, settleDays, 
-                                         cal_cop, busAdj, eom, dc)]
-# Helpers for 2-20 Years
-swapHelpers = []
-for i,r in cMkt.iterrows():
-    qlQte = ql.QuoteHandle(ql.SimpleQuote(r[pd.Timestamp(str_evDate)]/100))
-    qlPer = ql.Period(int(r['Term']), int(r['qlTenor']))
-    swapHelpers += [ql.OISRateHelper(settlementDays=settleDays, 
-                                 tenor=qlPer,
-                                 rate=qlQte,
-                                 index=IBR,
-                                 discountingCurve=ql.YieldTermStructureHandle(), 
-                                 telescopicValueDates=False, 
-                                 paymentLag=0, 
-                                 paymentConvention=busAdj, 
-                                 paymentFrequency=pmtFreq, 
-                                 paymentCalendar=cal_cop)]
+    edt = r['Term']
+    qtR = ql.QuoteHandle(ql.SimpleQuote(r[pd.Timestamp(str_evDate)]/100))
+    zeroHelpers += [ql.DatedOISRateHelper(sdt, edt, qtR, CDI)]
+    sdt = cal_brl.advance(r['Term'],ql.Period('1D'))
+
 # Curve Helpers
-crvHelpers = helpers_ON + zeroHelpers + swapHelpers
+crvHelpers = helpers_ON + zeroHelpers
 
 # BRL Curve Bootstrapping
-crvCOP = ql.PiecewiseCubicZero(date_ql, crvHelpers, dc)
-crvCOP = ql.PiecewiseNaturalLogCubicDiscount(date_ql, crvHelpers, dc)
-crvCOP.enableExtrapolation()
+crvBRL = ql.PiecewiseCubicZero(date_ql, crvHelpers, dc)
+crvBRL = ql.PiecewiseNaturalLogCubicDiscount(date_ql, crvHelpers, dc)
+crvBRL.enableExtrapolation()
 
-print_zero(date_ql, crvCOP)
+print_zero(date_ql, crvBRL)
 #%% BRL SWAP PRICING
 
 # BRL Yield Term Structure
-rYTS_COP = ql.RelinkableYieldTermStructureHandle(crvCOP)
-IBR = ql.OvernightIndex("IBR",settleDays,ql.COPCurrency(),cal_cop,dc,
-                        rYTS_COP)
-ibr_swp_engine = ql.DiscountingSwapEngine(rYTS_COP)
-if cal_cop.isHoliday(date_ql):
-    IBR.addFixing(date_ql - ql.Period('1D'), 
-                  rYTS_COP.forwardRate(date_ql, date_ql+ql.Period('1D'), 
+rYTS_BRL = ql.RelinkableYieldTermStructureHandle(crvBRL)
+CDI = ql.OvernightIndex("CDI",settleDays,ql.BRLCurrency(),cal_brl,dc,rYTS_BRL)
+cdi_swp_engine = ql.DiscountingSwapEngine(rYTS_BRL)
+if cal_brl.isHoliday(date_ql):
+    CDI.addFixing(date_ql - ql.Period('1D'), 
+                  rYTS_BRL.forwardRate(date_ql, date_ql+ql.Period('1D'), 
                                        dc, ql.Compounded, ql.Daily).rate())
 
 # Mkt RepRicing
-df_ibr = pd.DataFrame()
+df_cdi = pd.DataFrame()
 schdDates = []
-start = cal_cop.advance(date_ql, 2, ql.Days)
-for i,row in df_mkt_cop.drop('COOVIBR Index').iterrows():
-    ibr_tenor = ql.Period(int(row['Term']), int(row['qlTenor']))
-    # end = cal_cop.advance(start, icp_tenor)
-    end = start + ibr_tenor
-    pmtFreq = None
-    if row['qlTenor'] >= 3: pmtFreq = ql.Quarterly
-    qlSch = ql.MakeSchedule(start, start + ibr_tenor, ibr_tenor, pmtFreq, cal_cop)
+start = ql.Date(sdt_dt.day, sdt_dt.month, sdt_dt.year)
+for i,row in df_mkt_.drop('BZDIOVRA Index').iterrows():
+    end = row['Term']
+    qlSch = ql.MakeSchedule(start, end, ql.Period('1M'), ql.NoFrequency, cal_brl)
     schdDates += [list(qlSch.dates())]
-    ibr_swap = ql.OvernightIndexedSwap(-1, 1e6, qlSch, 0.04, dc, IBR)
-    ibr_swap.setPricingEngine(ibr_swp_engine)
-    newDrow = [row.name, 100*ibr_swap.fairRate()]
-    df_ibr = pd.concat([df_ibr, pd.DataFrame(newDrow).T])
-df_ibr.columns = ['0', 'Model']
-df_ibr.index = df_mkt_cop.drop('COOVIBR Index').index
-df_ibr = df_ibr.drop('0', axis=1)
-df_ibr = df_ibr.merge(df_mkt_cop, left_index=True, 
+    cdi_swap = ql.OvernightIndexedSwap(-1, 1e6, qlSch, 0.04, dc, CDI)
+    cdi_swap.setPricingEngine(cdi_swp_engine)
+    newDrow = [row.name, 100*cdi_swap.fairRate()]
+    df_cdi = pd.concat([df_cdi, pd.DataFrame(newDrow).T])
+    start = cal_brl.advance(end, ql.Period('1D'))
+df_cdi.columns = ['0', 'Model']
+df_cdi.index = df_mkt_.drop('BZDIOVRA Index').index
+df_cdi = df_cdi.drop('0', axis=1)
+df_cdi = df_cdi.merge(df_mkt_, left_index=True, 
                       right_index=True)[[pd.Timestamp(str_evDate),'Model']]
-df_ibr.insert(0,'Tenor', df_mkt_cop.loc[df_ibr.index].apply(lambda x: str(x['Term'])+x['Tenor'],axis=1))
-print('\n',df_ibr)
+df_cdi.insert(0,'CTCode', df_mkt_.loc[df_cdi.index]['CTCode'])
+print('\n',df_cdi)
 styles = ['-','--']
-xlabs = df_ibr['Tenor']
-df_ibr.plot(legend=None, style=styles)
+xlabs = df_cdi['CTCode']
+df_cdi.plot(legend=None, style=styles)
 plt.xticks(range(xlabs.shape[0]), xlabs.tolist(), rotation=45)
 plt.legend(['Spot Mkt','Model']); plt.tight_layout();plt.show()
 
@@ -233,59 +233,58 @@ tnrPer = ql.Period('1Y')
 sTnr = start + tnrPer
 eTnr = sTnr + tnrPer
 pFrq = None
-if (eTnr - start)/360 >= 2: pFrq = ql.Quarterly
-qteSch = ql.MakeSchedule(sTnr, eTnr, ibr_tenor, pFrq, cal_cop)
-ibr_swap = ql.OvernightIndexedSwap(-1, 100e6, qteSch, 0.04, dc, IBR)
-ibr_swap.setPricingEngine(ibr_swp_engine)
-ibr_swpR = 100*ibr_swap.fairRate()
+qteSch = ql.MakeSchedule(sTnr, eTnr, ql.Period('1Y'), pFrq, cal_brl)
+cdi_swap = ql.OvernightIndexedSwap(-1, 100e6, qteSch, 0.04, dc, CDI)
+cdi_swap.setPricingEngine(cdi_swp_engine)
+ibr_swpR = 100*cdi_swap.fairRate()
 print(f"\n1Y1Y: {ibr_swpR:,.4f}\n")
 
 #%% BRL FORWARD CURVE
 
 # BRL 1M Forwards
-st = start
+st = cal_brl.advance(date_ql, ql.Period('1D'))
 df_copFwd = pd.DataFrame()
 for n in range(120):
     ed = st + ql.Period('1M')
-    fr = rYTS_COP.forwardRate(st, ed, dc, ql.Compounded, ql.Daily).rate()
+    fr = rYTS_BRL.forwardRate(st, ed, dc, ql.Compounded, ql.Daily).rate()
     df_copFwd = pd.concat([df_copFwd,pd.DataFrame([st,ed,100*fr]).T])
     st = ed
 df_copFwd.reset_index(drop=True, inplace=True)
 df_copFwd.columns=['Start','End','Rate']
-df_copFwd.plot(x='End', y='Rate', legend=None, title='IBR Fwd Curve', ylabel='1M Rate')
+df_copFwd.plot(x='End', y='Rate', legend=None, title='CDI Fwd Curve', ylabel='1M Rate')
 df_copFwd['Pricing'] = 100*(df_copFwd['Rate'] -\
-                    df_mkt_cop.loc['COOVIBR Index',pd.Timestamp(str_evDate)])
+                    df_mkt_.loc['BZDIOVRA Index',pd.Timestamp(str_evDate)])
 
-# BanRepCol Pricing
-df_pmd = pd.read_excel(r'U:\Fixed Income\File Dump\Database\CBPMD.xlsx')
-bdrc_dates = df_pmd[df_pmd['BRL'] >= pd.Timestamp(date_ql.to_date())]['BRL'].\
+# BCB Pricing
+df_pmd = pd.read_excel(rsc_path+r'\CBPMD.xlsx')
+bcb_dates = df_pmd[df_pmd['BRL'] >= pd.Timestamp(date_ql.to_date())]['BRL'].\
     apply(lambda x: ql.Date(x.day,x.month,x.year)).\
-        apply(lambda x: cal_cop.advance(x, 2, ql.Days))
-df_bdrc = pd.DataFrame()
-for d in bdrc_dates:
-    d2 = cal_cop.advance(d, 1, ql.Days)
-    fr = rYTS_COP.forwardRate(d, d2, dc, ql.Compounded, ql.Daily).rate()
-    df_bdrc = pd.concat([df_bdrc,pd.DataFrame([d.to_date(),d2.to_date(),100*fr]).T])
-df_bdrc.columns = ['Start','End','Rate']
-df_bdrc['Pricing'] = 100*(df_bdrc['Rate'] -\
-                    df_mkt_cop.loc['COOVIBR Index',pd.Timestamp(str_evDate)])
-df_bdrc['IncPric'] = df_bdrc['Pricing'] - df_bdrc['Pricing'].shift().fillna(0)
-df_bdrc.index=df_pmd[df_pmd['BRL'] >= pd.Timestamp(date_ql.to_date())]['BRL'].rename('Date')
+        apply(lambda x: cal_brl.advance(x, 1, ql.Days))
+df_bcb = pd.DataFrame()
+for d in bcb_dates:
+    d2 = cal_brl.advance(d, 1, ql.Days)
+    fr = rYTS_BRL.forwardRate(d, d2, dc, ql.Compounded, ql.Daily).rate()
+    df_bcb = pd.concat([df_bcb,pd.DataFrame([d.to_date(),d2.to_date(),100*fr]).T])
+df_bcb.columns = ['Start','End','Rate']
+df_bcb['Pricing'] = 100*(df_bcb['Rate'] -\
+                    df_mkt_.loc['BZDIOVRA Index',pd.Timestamp(str_evDate)])
+df_bcb['IncPric'] = df_bcb['Pricing'] - df_bcb['Pricing'].shift().fillna(0)
+df_bcb.index=df_pmd[df_pmd['BRL'] >= pd.Timestamp(date_ql.to_date())]['BRL'].rename('Date')
 ## adjusting fwd rates wit more than 1 day compounded
-df_bdrc['Pricing'] = 100*(df_bdrc.\
+df_bcb['Pricing'] = 100*(df_bcb.\
     apply(lambda x: ((1+x['Rate']*(x['End']-x['Start']).days/36000)**\
                      (1/((x['End']-x['Start']).days))-1)*36000, axis=1) -\
-        df_mkt_cop.loc['COOVIBR Index',pd.Timestamp(str_evDate)])
-df_bdrc['IncPric'] = df_bdrc['Pricing'] - df_bdrc['Pricing'].shift().fillna(0)
+        df_mkt_.loc['BZDIOVRA Index',pd.Timestamp(str_evDate)])
+df_bcb['IncPric'] = df_bcb['Pricing'] - df_bcb['Pricing'].shift().fillna(0)
 # Plot
 from matplotlib.dates import DateFormatter
 date_form = DateFormatter("%Y-%b")
 fig, ax = plt.subplots()
-ax.bar(x=df_bdrc.index, height=df_bdrc['IncPric'], width=25, align='center')
+ax.bar(x=df_bcb.index, height=df_bcb['IncPric'], width=25, align='center')
 ax.xaxis.set_major_formatter(date_form)
 ax.figure.autofmt_xdate()
-plt.title('BDRC Inc. Pricing')
+plt.title('BCB Inc. Pricing')
 plt.tight_layout(); plt.show()
-print(df_bdrc.iloc[:5])
+print(df_bcb.iloc[:5])
 
 
