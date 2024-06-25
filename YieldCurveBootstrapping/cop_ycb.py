@@ -118,7 +118,7 @@ df_mkt_cop = pd.DataFrame(zip(term, tenor),
              index=copswpstkrs)
 
 # Eval. Date
-date_ql = ql.Date(21,6,2024)
+date_ql = ql.Date(25,6,2024)
 ql.Settings.instance().evaluationDate = date_ql
 str_evDate = date_ql.to_date().strftime('%Y-%m-%d')
 

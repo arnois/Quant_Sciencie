@@ -120,7 +120,7 @@ df_mkt_ = pd.DataFrame(None, columns = ['CTCode','Term','Tenor'],
              index=brlswpstkrs)
 
 # Eval. Date
-date_ql = ql.Date(21,6,2024)
+date_ql = ql.Date(25,6,2024)
 date_ts = date_ql.to_date()
 ql.Settings.instance().evaluationDate = date_ql
 str_evDate = date_ql.to_date().strftime('%Y-%m-%d')
