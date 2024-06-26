@@ -13,6 +13,7 @@ import QuantLib as ql
 import numpy as np
 import pandas as pd
 import requests
+from datetime import timedelta, date
 ###############################################################################
 # Global Variables
 ###############################################################################
@@ -110,7 +111,7 @@ def pull_data2(str_file, dt_today, str_db):
 # QuantLib's Helper object for USDOIS Crv Bootstrapping
 def qlHelper_USDOIS(df):
     # market calendar
-    calendar = ql.UnitedStates()
+    calendar = ql.UnitedStates(0)
     # input data
     tenor = df['Tenors'].str[-1].map(tenor2ql).to_list()
     period = df['Period'].astype(int).to_list()
@@ -161,9 +162,9 @@ def qlHelper_USDOIS(df):
 # QuantLib's Helper object for USD3M Crv Bootstrapping
 def qlHelper_USD3M(dic_df, discount_curve):
     # market calendar
-    calendar = ql.UnitedStates()
+    calendar = ql.UnitedStates(0)
     # settlement date
-    dt_settlement = ql.UnitedStates().advance(
+    dt_settlement = ql.UnitedStates(0).advance(
         ql.Settings.instance().evaluationDate,ql.Period('2D'))
     # non-futures idx
     df = dic_df['USD_LIBOR_3M']
@@ -257,7 +258,7 @@ def qlHelper_USD3M(dic_df, discount_curve):
 # QuantLib's Helper object for USD1M Crv Bootstrapping
 def qlHelper_USD1M(dic_df, crv_USD3M):
     # market calendar
-    calendar = ql.UnitedStates()
+    calendar = ql.UnitedStates(0)
     
     # dat
     df = dic_df['USD_LIBOR_3Mvs1M_Basis']
@@ -425,8 +426,8 @@ def qlHelper_SOFR(dic_df, discount_curve):
 # QuantLib's Helper object for Implied MXNOIS Crv Bootstrapping
 def qlHelper_MXNOIS(dic_df, discount_curve, crv_usdswp, crvType = 'SOFR'):
     # Calendars
-    #calendar_us = ql.UnitedStates()
-    calendar_mx = ql.Mexico()
+    #calendar_us = ql.UnitedStates(0)
+    calendar_mx = ql.Mexico(0)
 
     # Handle dat
     spotfx = dic_df['USDMXN_XCCY_Basis']['Quotes'][0]
@@ -434,8 +435,9 @@ def qlHelper_MXNOIS(dic_df, discount_curve, crv_usdswp, crvType = 'SOFR'):
     df_tiie = dic_df['MXN_TIIE']
     df_fwds = dic_df['USDMXN_Fwds']
     # Handle idxs
+    str_tenors_fwds = ['%-1B', '%1W', '%1M', '%2M', '%3M','%6M', '%9M', '%1Y'] # ['%3M','%6M', '%9M', '%1Y']
     idx_fwds = np.where(np.isin(df_fwds['Tenor'],
-                     ['%3M','%6M', '%9M', '%1Y']))[0].tolist()
+                                str_tenors_fwds))[0].tolist()
     lst_tiieT = ['%1L', '%26L', '%39L', '%52L', '%65L', 
                  '%91L', '%130L', '%195L', '%260L', '%390L']
     idx_tiie = np.where(np.isin(df_tiie['Tenor'],
@@ -445,6 +447,7 @@ def qlHelper_MXNOIS(dic_df, discount_curve, crv_usdswp, crvType = 'SOFR'):
     basis_period = df_basis['Period'].astype(int).tolist()
     tiie_period = df_tiie['Period'][idx_tiie].astype(int).to_list()
     fwds_period = df_fwds['Period'][idx_fwds].astype(int).to_list()
+    fwds_period[-1] = 1
     data_tiie = (df_tiie['Quotes'][idx_tiie]/100).tolist()
     data_fwds = (df_fwds['Quotes'][idx_fwds]/10000).tolist()
     if crvType == 'SOFR':
@@ -459,10 +462,11 @@ def qlHelper_MXNOIS(dic_df, discount_curve, crv_usdswp, crvType = 'SOFR'):
         basis_usdmxn[(basis_period[i], tenor)] = data_basis[i]
 
     # Forward Points
+    fwds_tenors = [tenor2ql[t[-1]] for t in str_tenors_fwds]
     fwdpts = {}
     n_fwds = len(fwds_period)
     for i in range(n_fwds):
-        fwdpts[(fwds_period[i], tenor)] = data_fwds[i]
+        fwdpts[(fwds_period[i], fwds_tenors[i])] = data_fwds[i]
 
     # Deposit rates
     deposits = {(tiie_period[0], tenor): data_tiie[0]}
@@ -503,8 +507,8 @@ def qlHelper_MXNOIS(dic_df, discount_curve, crv_usdswp, crvType = 'SOFR'):
         ql.QuoteHandle(fwdpts[(n,u)]),
         ql.QuoteHandle(
             ql.SimpleQuote(spotfx)),
-        ql.Period(n*4, ql.Weeks),
-        2,
+        ql.Period(n, u),
+        1,
         calendar_mx,
         ql.Following,
         False,
@@ -515,13 +519,12 @@ def qlHelper_MXNOIS(dic_df, discount_curve, crv_usdswp, crvType = 'SOFR'):
     ]
 
     # Swap rate helpers
-    settlementDays = 2
+    #settlementDays = 2
     fixedLegFrequency = ql.EveryFourthWeek
     fixedLegAdjustment = ql.Following
     fixedLegDayCounter = ql.Actual360()
     if crvType == 'SOFR':
-        fxIborIndex = ql.Sofr(crv_usdswp)
-        #fxIborIndex = ql.Sofr(discount_curve)
+        fxIborIndex = ql.Sofr()
     else:
         fxIborIndex = ql.USDLibor(ql.Period('1M'), crv_usdswp)
 
@@ -533,18 +536,20 @@ def qlHelper_MXNOIS(dic_df, discount_curve, crv_usdswp, crvType = 'SOFR'):
                                    fixedLegDayCounter, 
                                    fxIborIndex, 
                                    ql.QuoteHandle(basis_usdmxn[(n,unit)]), 
-                                   ql.Period(0, ql.Days))
+                                   ql.Period(0, ql.Days),
+                                   ql.YieldTermStructureHandle(),
+                                   1)
                    for n, unit in swaps_tiie.keys() ]
 
     # Rate helpers merge
-    helpers = depositHelpers + fxSwapHelper + swapHelpers
+    helpers = fxSwapHelper + swapHelpers
 
     return(helpers)
 
 # QuantLib's Helper object for Implied MXNOIS Crv Bootstrapping w/oFutures
 def qlHelper_MXNOISwF(dic_df, discount_curve, crv_usdswp, crvType = 'SOFR'):
     # Calendars
-    calendar_mx = ql.Mexico()
+    calendar_mx = ql.Mexico(0)
 
     # Handle dat
     df_basis = dic_df['USDMXN_XCCY_Basis']
@@ -629,7 +634,7 @@ def qlHelper_MXNOISwF(dic_df, discount_curve, crv_usdswp, crvType = 'SOFR'):
 # QuantLib's Helper object for TIIE Crv Bootstrapping
 def qlHelper_MXNTIIE(df, crv_MXNOIS):
     # calendar
-    calendar_mx = ql.Mexico()
+    calendar_mx = ql.Mexico(0)
     # data
     tenor = ql.EveryFourthWeek
     period = df['Period'].astype(int).to_list()
@@ -677,8 +682,8 @@ def qlHelper_MXNTIIE(df, crv_MXNOIS):
                  calendar_mx,
                  ql.Following,
                  False,
-                 ql.Actual360(),
-                 crv_MXNOIS)
+                 ql.Actual360())
+                 # crv_MXNOIS) discounting should be done in the swap helpers
 
     swapHelpers = [ql.SwapRateHelper(
         ql.QuoteHandle(swaps[(n,unit)]),
@@ -687,7 +692,7 @@ def qlHelper_MXNTIIE(df, crv_MXNOIS):
         fixedLegFrequency, 
         fixedLegAdjustment,
         fixedLegDayCounter, 
-        ibor_MXNTIIE)
+        ibor_MXNTIIE, ql.QuoteHandle(), ql.Period(), crv_MXNOIS)
         for n, unit in swaps.keys()
     ]
 
@@ -702,7 +707,7 @@ def qlHelper_MXNTIIE(df, crv_MXNOIS):
 # USDOIS CURVE BOOTSTRAPPING
 def btstrap_USDOIS(dic_data):
     hlprUSDOIS = qlHelper_USDOIS(dic_data['USD_OIS'])
-    crvUSDOIS = ql.PiecewiseLogLinearDiscount(0, ql.UnitedStates(), 
+    crvUSDOIS = ql.PiecewiseLogLinearDiscount(0, ql.UnitedStates(0), 
                                                     hlprUSDOIS, ql.Actual360())
     crvUSDOIS.enableExtrapolation()
     return crvUSDOIS
@@ -713,7 +718,7 @@ def btstrap_USDSOFR(dic_data, crvUSDOIS):
     crvDiscUSD.linkTo(crvUSDOIS)
         
     hlprSOFR = qlHelper_SOFR(dic_data, crvDiscUSD)
-    crvSOFR = ql.PiecewiseNaturalLogCubicDiscount(0, ql.UnitedStates(), 
+    crvSOFR = ql.PiecewiseNaturalLogCubicDiscount(0, ql.UnitedStates(0), 
                                                    hlprSOFR, 
                                                    ql.Actual360())
     crvSOFR.enableExtrapolation()
@@ -726,7 +731,7 @@ def btstrap_USD3M(dic_data, crvUSDOIS):
     crvDiscUSD.linkTo(crvUSDOIS)
         
     hlprUSD3M = qlHelper_USD3M(dic_data, crvDiscUSD)
-    crvUSD3M = ql.PiecewiseNaturalLogCubicDiscount(0, ql.UnitedStates(), 
+    crvUSD3M = ql.PiecewiseNaturalLogCubicDiscount(0, ql.UnitedStates(0), 
                                                    hlprUSD3M, 
                                                    ql.Actual360())
     crvUSD3M.enableExtrapolation()
@@ -737,7 +742,7 @@ def btstrap_USD1M(dic_data, crvUSD3M):
     crv_usd3m = ql.RelinkableYieldTermStructureHandle()
     crv_usd3m.linkTo(crvUSD3M)
     hlprUSD1M = qlHelper_USD1M(dic_data, crv_usd3m)
-    crvUSD1M = ql.PiecewiseNaturalLogCubicDiscount(0, ql.UnitedStates(), 
+    crvUSD1M = ql.PiecewiseNaturalLogCubicDiscount(0, ql.UnitedStates(0), 
                                                    hlprUSD1M, 
                                                    ql.Actual360())
     crvUSD1M.enableExtrapolation()
@@ -751,7 +756,7 @@ def btstrap_MXNOIS(dic_data, crvUSDSWP, crvUSDOIS, crvType='SOFR'):
     crv_usdswp.linkTo(crvUSDSWP)
     # with Futures
     hlprMXNOIS = qlHelper_MXNOIS(dic_data, crvDiscUSD, crv_usdswp, crvType)
-    crvMXNOIS = ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(), 
+    crvMXNOIS = ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(0), 
                                                    hlprMXNOIS, 
                                                    ql.Actual360())
     crvMXNOIS.enableExtrapolation()
@@ -765,7 +770,7 @@ def btstrap_MXNOISwF(dic_data, crvUSDSWP, crvUSDOIS, crvType='SOFR'):
     crv_usdswp.linkTo(crvUSDSWP)
     # w/o Futures
     hlprMXNOIS = qlHelper_MXNOISwF(dic_data, crvDiscUSD, crv_usdswp, crvType)
-    crvMXNOIS = ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(), 
+    crvMXNOIS = ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(0), 
                                                    hlprMXNOIS, 
                                                    ql.Actual360())
     crvMXNOIS.enableExtrapolation()
@@ -776,7 +781,7 @@ def btstrap_MXNTIIE(dic_data, crvMXNOIS):
     crv_mxnois = ql.RelinkableYieldTermStructureHandle()
     crv_mxnois.linkTo(crvMXNOIS)
     hlprTIIE = qlHelper_MXNTIIE(dic_data['MXN_TIIE'], crv_mxnois)
-    crvTIIE = ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(), hlprTIIE, 
+    crvTIIE = ql.PiecewiseNaturalLogCubicDiscount(0, ql.Mexico(0), hlprTIIE, 
                                                   ql.Actual360())
     crvTIIE.enableExtrapolation()
     return crvTIIE
@@ -892,9 +897,11 @@ def crvTenorRisk_TIIE(dic_df, crvDiscUSD, crv_usdswp, crvMXNOIS):
         tenor = r['Tenor']
         rate_plus_1bp = r['Quotes'] + 1/100
         rate_min_1bp = r['Quotes'] - 1/100
+        
         # Tenor +1bp
         tmpdf['Quotes'][df_tiie['Tenor'] == tenor] = rate_plus_1bp
         modic['MXN_TIIE']['Quotes'] = tmpdf['Quotes']
+        
         # Disc Curve
         crvMXNOIS = btstrap_MXNOIS(modic, crv_usdswp, 
                                    crvDiscUSD, crvType='SOFR')
@@ -953,36 +960,80 @@ def crvTenorRisk_TIIEwF(dic_df, crvDiscUSD, crv_usdswp):
 ###############################################################################
 # Swap Features
 ###############################################################################
+# TIIE Swap Fixings
+def get_fixings_TIIE28_banxico(evaluation_date):
+    token="c1b63f15802a3378307cc2eb90a09ae8e821c5d1ef04d9177a67484ee6f9397c" 
+    banxico_start_date = (evaluation_date - \
+                          timedelta(days = 3600)).strftime('%Y-%m-%d')
+    banxico_end_date = evaluation_date.strftime('%Y-%m-%d')
+    banxico_TIIE28 = banxico_download_data('SF43783', banxico_start_date, 
+                                              banxico_end_date, token)
+    return banxico_TIIE28
+
 # TIIE-IRS Ibor Index
-def set_ibor_TIIE(crvTIIE, str_tiiefixings_file, n = 30):
+def set_ibor_TIIE(crvTIIE, str_tiiefixings_file = None, n = 30):
+    # Eval Date
+    ql_eval_date = ql.Settings.instance().evaluationDate
+    dt_eval_date = date(ql_eval_date.year(),
+                        ql_eval_date.month(),
+                        ql_eval_date.dayOfMonth())
+    # Fixings
+    banxico_TIIE28 = get_fixings_TIIE28_banxico(dt_eval_date)
     # TIIE IBOR INDEX
     if type(crvTIIE) != type(ql.RelinkableYieldTermStructureHandle()):
         ibor_tiie_crv = ql.RelinkableYieldTermStructureHandle()
         ibor_tiie_crv.linkTo(crvTIIE)
     else:
         ibor_tiie_crv = crvTIIE
+    # IborIndex
     ibor_tiie = ql.IborIndex('TIIE',
                  ql.Period(13),
                  1,
                  ql.MXNCurrency(),
-                 ql.Mexico(),
+                 ql.Mexico(0),
                  ql.Following,
                  False,
                  ql.Actual360(),
                  ibor_tiie_crv)
-
+    ###########################################################################
+    # Ibor Index Fixings
+    ibor_tiie.clearFixings()
+    for h in range(len(banxico_TIIE28['fecha']) - 1):
+        dt_fixing = pd.to_datetime(banxico_TIIE28['fecha'][h])
+        ibor_tiie.addFixing(
+            ql.Date(dt_fixing.day, dt_fixing.month, dt_fixing.year), 
+            banxico_TIIE28['dato'][h+1]
+            )
+    # fill mixing fixings up until eval date
+    dt_last = banxico_TIIE28.iloc[-1]['fecha']
+    if dt_last < dt_eval_date:
+        ql_hldy = ql.Mexico().\
+            holidayList(ql.Date(dt_last.day, dt_last.month, dt_last.year), 
+            ql.Date(dt_eval_date.day, dt_eval_date.month, dt_eval_date.year))
+        dt_hldy = [date(qdt.year(), qdt.month(), qdt.dayOfMonth()) for qdt in ql_hldy]
+        dt_rng = pd.bdate_range(banxico_TIIE28.iloc[-1]['fecha'], 
+                                dt_eval_date, freq='C',
+                                weekmask = "Mon Tue Wed Thu Fri",
+                                holidays=dt_hldy)
+        for nfd in dt_rng:
+            ibor_tiie.addFixing(
+                ql.Date(nfd.day, nfd.month, nfd.year), 
+                banxico_TIIE28['dato'].iloc[-1]
+                )
+    
+    ###########################################################################
     # HITORICAL FIXINGS
     # file import
-    df_tiieFxngs = pd.read_excel(str_tiiefixings_file, 'Hoja1', 
-                                 skiprows=17, engine = 'openpyxl')
-    df_tiieFxngs = df_tiieFxngs[['Fecha','SF43783']]
-    df_tiieFxngs = df_tiieFxngs[df_tiieFxngs['SF43783']!='N/E']
-    df_tiieFxngs['qlDate'] = [ql.Mexico().advance(
-        ql.Date(t.day,t.month,t.year),-1,ql.Days) for t in df_tiieFxngs['Fecha']]
+    #df_tiieFxngs = pd.read_excel(str_tiiefixings_file, 'Hoja1', 
+    #                             skiprows=17, engine = 'openpyxl')
+    #df_tiieFxngs = df_tiieFxngs[['Fecha','SF43783']]
+    #df_tiieFxngs = df_tiieFxngs[df_tiieFxngs['SF43783']!='N/E']
+    #df_tiieFxngs['qlDate'] = [ql.Mexico(0).advance(
+    #    ql.Date(t.day,t.month,t.year),-1,ql.Days) for t in df_tiieFxngs['Fecha']]
     # historical fixings update
-    ibor_tiie.addFixings([t for t in df_tiieFxngs.tail(n).iloc[:,2]], 
-                            [r/100 for r in df_tiieFxngs.tail(n).iloc[:,1]], 
-                            forceOverwrite=True)
+    #ibor_tiie.addFixings([t for t in df_tiieFxngs.tail(n).iloc[:,2]], 
+    #                        [r/100 for r in df_tiieFxngs.tail(n).iloc[:,1]], 
+    #                        forceOverwrite=True)
     return(ibor_tiie)
 
 ###############################################################################

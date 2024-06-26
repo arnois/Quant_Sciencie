@@ -176,7 +176,7 @@ def update_data_5m(str_path, str_file, str_shtname, n_skipRows, str_dbpath):
     data = pd.read_parquet(str_dbpath)
     tmpdata = readParseData(str_path, str_file, str_shtname, n_skipRows)
     # tmpdata.iloc[~tmpdata.index.isin(data.index),:]
-    updatedata = data.append(tmpdata.iloc[~tmpdata.index.isin(data.index),:])
+    updatedata = pd.concat([data, tmpdata.iloc[~tmpdata.index.isin(data.index),:]]) # data.append(tmpdata.iloc[~tmpdata.index.isin(data.index),:])
     updatedata.to_parquet(str_dbpath)
     return updatedata
 
@@ -205,8 +205,8 @@ def datasplit_train_valid(data):
     # Datetime delimiters
     tStart_train, tStart_valid, tEnd_valid = dt_delims_train_valid()
     # Data split: train(28d)-valid(7d)-test(1d)
-    df_train = data.loc[str(tStart_train):str(tStart_valid),]
-    df_valid = data.loc[str(tStart_valid):str(tEnd_valid),]
+    df_train = data.loc[tStart_train:tStart_valid,]
+    df_valid = data.loc[tStart_valid:tEnd_valid,]
     
     return df_train, df_valid
 
@@ -247,13 +247,14 @@ def get_bestBivarCop(tgt_y, df_train_r_u, df_valid_r_u):
     try:
         # update params
         tmpdic_copPairs[bestpair].\
-            fit(df_train_r_u.append(df_valid_r_u)[bestcopair].to_numpy())
+            fit(pd.concat([df_train_r_u, df_valid_r_u])[bestcopair].to_numpy()) # df_train_r_u.append(df_valid_r_u)[bestcopair].to_numpy()
     except ValueError:
         # update copula model
         tmpdic_copPairs[bestpair] = \
             biCop.\
                 select_copula(
-                    df_train_r_u.append(df_valid_r_u)[bestcopair].to_numpy())
+                    pd.concat([df_train_r_u,df_train_r_u])[bestcopair].to_numpy()
+                    )
     # save updated model
     selCop_dic = tmpdic_copPairs[bestpair].to_dict()
     # save updated mispricing index
@@ -291,7 +292,7 @@ def copmodel_5M_fromDotParquet(path, filename, symbol):
     df_valid_r_u = df_valid_r.apply(lambda y: df_train_r_ecdf[y.name](y))
     
     # ECDF update
-    df_trva_r_ecdf = get_df_ret_ecdf(df_train_r.append(df_valid_r))
+    df_trva_r_ecdf = get_df_ret_ecdf(pd.concat([df_train_r, df_valid_r])) # df_train_r.append(df_valid_r)
     
     # Model fit
     model = get_bestBivarCop(symbol, df_train_r_u, df_valid_r_u)
@@ -353,7 +354,7 @@ def bulkset_copmodel_5M_fromDotParquet(datapath, dataname,
     # Export model
     with open(str_modelname, 'wb') as f:
         pickle.dump(models, f)
-    print(f"\nElapsed time fitting models: {elapsedtime.seconds/60} minutes\n")
+    print(f"\nElapsed time fitting models: {elapsedtime.seconds/60:.2f} minutes\n")
     return None
 ###############################################################################
 # Function to import settings from settings.json
@@ -502,7 +503,7 @@ def model_train(tgt_y: str = 'USDMXN', n_year: int = 2022) -> dict:
     # Data
     str_dbpath = r"H:\db\data_5m.parquet"; data = pd.read_parquet(str_dbpath)
     
-    # Filtered Data from 6 to 15
+    # Filtered Data from 6 to 15 hour handles
     data = slice_HGDF(data,6,15)
     
     # OC returns
@@ -589,7 +590,7 @@ def copmodel_byCouple(symbol='USDMXN', timeframe='M5', couple='USDZAR'):
     hourshift = mt5_interface.get_timezone_shift_hour(symbol)
     # Pull data
     tmpdf = mt5_interface.query_bulkdata(timeframe, hourshift)
-    tmpdf2 = tmpdf.loc[:,lst_pairs].fillna(method='ffill').dropna(axis=1)
+    tmpdf2 = tmpdf.loc[:,lst_pairs].fillna(method='ffill').fillna(method='bfill').dropna(axis=1)
     
     # Train-Valid data split
     df_train, df_valid = datasplit_train_valid(tmpdf2)
@@ -605,7 +606,7 @@ def copmodel_byCouple(symbol='USDMXN', timeframe='M5', couple='USDZAR'):
     df_valid_r_u = df_valid_r.apply(lambda y: df_train_r_ecdf[y.name](y))
     
     # ECDF update
-    df_trva_r_ecdf = get_df_ret_ecdf(df_train_r.append(df_valid_r))
+    df_trva_r_ecdf = get_df_ret_ecdf(pd.concat([df_train_r, df_valid_r])) # get_df_ret_ecdf(df_train_r.append(df_valid_r))
     
     #Model specs
     model = get_bestBivarCop(symbol, df_train_r_u, df_valid_r_u)
@@ -764,7 +765,7 @@ def get_copmodel_run(symbol, timeframe, model):
     mpxidx_test['m'] = mpxidx_test.h-0.5
     mpxidx_test['M'] = mpxidx_test.m.cumsum()
     # TI applied to Mt
-    df_M = model['M'].append(mpxidx_test[['M']])
+    df_M = pd.concat([model['M'], mpxidx_test[['M']]]) # model['M'].append(mpxidx_test[['M']])
     df_M.ta.rsi(close='M', length=9, suffix='M', append=True)
     df_run = df_M.copy()
     df_run = df_run.merge(hfdata[[symbol+'_C']], 
@@ -792,7 +793,8 @@ def get_copmodel_run_fromXL(str_path, filename, symbol, models):
     
     # Uniform data
     df_test_r = get_df_ret(hfdata)
-    df_test_r_u = df_test_r.apply(lambda y: df_trva_r_ecdf[y.name](y))
+    df_test_r_u = df_test_r[df_trva_r_ecdf.index.tolist()]\
+        .apply(lambda y: df_trva_r_ecdf[y.name](y))
 
     # Conditional cum. distribution 
     mpxidx_test = pd.DataFrame(cop.partial_derivative(
@@ -802,7 +804,7 @@ def get_copmodel_run_fromXL(str_path, filename, symbol, models):
     mpxidx_test['m'] = mpxidx_test.h-0.5
     mpxidx_test['M'] = mpxidx_test.m.cumsum()
     # TI applied to Mt
-    df_M = models[tgt_y]['M'].append(mpxidx_test[['M']])
+    df_M = pd.concat([models[tgt_y]['M'], mpxidx_test[['M']]]) # models[tgt_y]['M'].append(mpxidx_test[['M']])
     df_M.ta.rsi(close='M', length=9, suffix='M', append=True)
     df_run = df_M.copy()
     lst_priceVars = [s+'_C' for s in [tgt_y, y2]]

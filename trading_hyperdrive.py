@@ -65,10 +65,12 @@ data['T4s5s'] = (data['TIIE5Y']-data['TIIE4Y'])*100
 data['T2s5s'] = (data['TIIE5Y']-data['TIIE2Y'])*100
 data['T2s3s4s'] = (2*data['TIIE3Y']-data['TIIE2Y']-data['TIIE4Y'])*100
 data['T2s5s10s'] = (2*data['TIIE5Y']-data['TIIE2Y']-data['TIIE10Y'])*100
+data['T2s3s5s'] = (2*data['TIIE3Y']-data['TIIE2Y']-data['TIIE5Y'])*100
 data['T3s5s7s'] = (2*data['TIIE5Y']-data['TIIE3Y']-data['TIIE7Y'])*100
 data['T3s5s10s'] = (2*data['TIIE5Y']-data['TIIE3Y']-data['TIIE10Y'])*100
 data['T4s5s7s'] = (2*data['TIIE5Y']-data['TIIE4Y']-data['TIIE7Y'])*100
 data['T3s4s5s'] = (2*data['TIIE4Y']-data['TIIE3Y']-data['TIIE5Y'])*100
+data['T3s7s10s'] = (2*data['TIIE7Y']-data['TIIE3Y']-data['TIIE10Y'])*100
 data['2Y1Y vs 3Y1Y'] = (data['TIIE3Y1Y']-data['TIIE2Y1Y'])*100
 data['4Y1Y vs 5Y2Y'] = (data['TIIE5Y2Y']-data['TIIE4Y1Y'])*100
 data['3Y1Y vs 4Y1Y'] = (data['TIIE4Y1Y']-data['TIIE3Y1Y'])*100
@@ -180,11 +182,11 @@ threshold over the model's error whould trigger a trade signal for the given
 target variable (TIIE 1y1y, for instance). Successful models should provide 
 timely signals that translate to consistent and stable profitable trade ideas.
 
-The problem will be solved by PCR model fitting over an 8-year trainning period.
-Over a 1-month period, daily, the model is tested for trading signals. Every
-time the errors exceed 2-sigma levels a long/short position is accounted and 
-closed whenever convergence is reached, when the errors return to zero from
-below/above.
+The problem will be solved by a PCR model. Trainning over an 8Y period.
+Over a 1-month period, the model is tested for daily trading signals. Every
+time the error exceeds a 2-sigma level a long/short position is triggered. When
+the error returns to zero from below/above convergence is met and a close
+signal is triggered then. 
 """
 from sklearn.preprocessing import StandardScaler
 sclr = StandardScaler()
@@ -200,7 +202,7 @@ df_pcr_test_perf = pd.DataFrame(columns=['Exp.Var','Max Err','MAE',
                                          'MSE','RMSE','R2Score','MAPE'])
 dic_pcr_run = {}
 # response variable
-y_name = 'T4s5s' # 3Y1Y vs 4Y1Y, 4Y1Y vs 5Y2Y, 3Y2Y vs 5Y2Y, 3Y2Y vs 5Y5Y
+y_name = 'T2s3s5s' # 3Y1Y vs 4Y1Y, 4Y1Y vs 5Y2Y, 3Y2Y vs 5Y2Y, 3Y2Y vs 5Y5Y
 # Dates delimiters for train-test data split
 df_dates_train_test = get_train_test_split_dates(data,2,1,1)
 # Loop through study periods
@@ -286,7 +288,7 @@ for i,r in list(df_dates_train_test.iterrows())[-32:]: # df_dates_train_test.ite
     model_err_z  = (model_err - pcr_err_mu)/pcr_err_std
     
     ## Errors transform
-    model_err_rsi = pcr_err_z.append(model_err_z).\
+    model_err_rsi = pd.concat([pcr_err_z, model_err_z]).\
         rename(columns={'Model':'close'}).ta.rsi(length=n_rsi_l).\
             loc[model_err_z.index].to_frame()
     model_err_rsi = model_err_rsi[~model_err_rsi.index.duplicated(keep='first')]
@@ -350,8 +352,10 @@ def run_model_pcr(y_name):
         print(f'\nCould not find model-file: pcr_{y_name}.pickle')
         return None
     # load
-    with open(str_model_path, 'rb') as handle:
-        model_dic = pickle.load(handle)
+    # with open(str_model_path, 'rb') as handle:
+    #     model_dic = pickle.load(handle)
+    # Load by Pandas
+    model_dic = pd.read_pickle(str_model_path)
     # study periods
     m_h_studyperiods = model_dic['hist_model_studyperiods']
     n_last_studyperiod = m_h_studyperiods.index[-1]
@@ -414,7 +418,7 @@ def run_model_pcr(y_name):
         m_new_err_std = m_new_err.std()
         m_new_err_z = (m_new_err - m_new_err_mu)/m_new_err_std
         m_new_err_test = y_test.cumsum()-y_test_pred.cumsum()
-        m_new_err=m_new_err.append(m_new_err_test)
+        m_new_err=pd.concat([m_new_err, m_new_err_test])
         m_new_err=m_new_err[~m_new_err.index.duplicated(keep='first')]
         ## rsi
         m_new_err_z = (m_new_err-m_new_err_mu)/m_new_err_std
@@ -464,15 +468,16 @@ def run_model_pcr(y_name):
         model_dic['feat_transform'] = m_feat_transform
         model_dic['feat_redux'] = m_feat_redux
         model_dic['model'] = m_new
-        model_dic['hist_model_studyperiods'] = m_h_studyperiods.append(
+        model_dic['hist_model_studyperiods'] = pd.concat([m_h_studyperiods,
             pd.Series(
                 [new_train_st, new_train_ed, 
                  new_test_st, new_test_ed], 
                 name=n_new, 
-                index=m_h_studyperiods.columns))
-        model_dic['hist_model_coeff'] = model_dic['hist_model_coeff'].append(
+                index=m_h_studyperiods.columns)
+                                                          ])
+        model_dic['hist_model_coeff'] = pd.concat([model_dic['hist_model_coeff'], 
             pd.Series(np.insert(m_new.coef_,len(m_new.coef_),m_new.intercept_), 
-                      name=n_new, index=model_dic['hist_model_coeff'].columns))
+                  name=n_new, index=model_dic['hist_model_coeff'].columns)])
         # save new run
         with open(str_model_path, 'wb') as handle:
             pickle.dump(model_dic, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -514,14 +519,14 @@ def run_model_pcr(y_name):
         # model err
         m_curr_err_train = (y_train.cumsum() - y_pred_train.cumsum())
         m_curr_err_test = (y_test.cumsum() - y_pred_test.cumsum())
-        m_curr_err = m_curr_err_train.append(m_curr_err_test)
+        m_curr_err = pd.concat([m_curr_err_train,m_curr_err_test])
         m_curr_err_z = \
             (m_curr_err - m_curr_err_train.mean())/m_curr_err_train.std()
         m_curr_err_rsi = m_curr_err_z.to_frame().\
             rename(columns={y_name:'close'}).\
                 ta.rsi(length=model_dic['model_err_rsi']).to_frame()
         ## plot
-        plt.style.use('seaborn')
+        plt.style.use('seaborn-v0_8')
         m_curr_err_rsi[f'RSI_{model_dic["model_err_rsi"]}'].\
             rename(f'Model({model_dic["response"]})').iloc[-22:].\
                 plot(color='C0',xlabel='');plt.\
@@ -568,19 +573,24 @@ def run_model_pcr(y_name):
 # In[Model]
 # targets
 lvlist = ['TIIE3Y']
-flylist = ['T5s7s10s','T3s4s5s','T4s5s7s','T3s5s7s','T3s5s10s','T2s5s10s', 'T2s3s4s'] 
+flylist = ['T5s7s10s','T3s4s5s','T4s5s7s','T3s5s7s','T3s5s10s','T2s5s10s', 
+           'T2s3s4s','T2s3s5s','T3s7s10s'] 
 sprdlist = ['T2s5s','T4s5s','T5s10s']
 fwdlist = ['TIIE1Y1Y', 'TIIE2Y1Y', 'TIIE2Y2Y', 'TIIE2Y5Y', 'TIIE5Y5Y', 
            'TIIE3Y1Y', 'TIIE3Y2Y', 'TIIE5Y2Y']
 fwdsprdlist = ['2Y1Y vs 3Y1Y', '3Y1Y vs 4Y1Y', '4Y1Y vs 5Y2Y', '3Y2Y vs 5Y2Y',
                '3Y2Y vs 5Y5Y', '1Y1Y vs 2Y1Y', '2Y1Y vs 3Y2Y', '2Y2Y vs 3Y2Y']
 # Run Model
-y_name = 'TIIE5Y2Y'
+y_name = '2Y1Y vs 3Y2Y'
 run_model_pcr(y_name)
 
 # batch run
 for name in lvlist+fwdlist+sprdlist+flylist+fwdsprdlist:
     print(run_model_pcr(name))
+    
+# BT Model Update
+for y_name in lvlist+fwdlist+sprdlist+flylist+fwdsprdlist:
+    bt_model_history(data, explanatorylst_fi, y_name)
 ###############################################################################
 # Loadings visualization given new observations
 # Model Factors Attribution

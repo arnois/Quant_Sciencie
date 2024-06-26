@@ -346,7 +346,8 @@ def get_CF_tiieSwap_atDate(swp, lst_fxngs, ql_tdy):
 
     cf = cf1_l1.copy()
     if cf.empty:
-        return cf.append({'date': None, 'netAmt': None}, ignore_index=True)
+        # return cf.append({'date': None, 'netAmt': None}, ignore_index=True)
+        return pd.concat([cf, pd.DataFrame({'date': None, 'netAmt': None}, index=[0])], ignore_index=True)
     else:
         cf.insert(1, 'fixingDate',cf1_l2['fixingDate'])
         cf['fltAmt'] = cf1_l2['fltAmt']
@@ -416,7 +417,7 @@ def get_pflio_npv_atDate(dt_valDate, dic_data, str_file_fixngs, df_book):
     return pfolio_npv
 
 # Portfolio Coupon Payments at Date
-def get_pfolio_CF_atDate(dt_date, df_book_npv, str_file_fixngs, ibor_tiie):
+def get_pfolio_CF_atDate(dt_date, df_book_npv, ibor_tiie):
     # Payment Date
     ql_dt_pmt = ql.Date(dt_date.day, dt_date.month, dt_date.year)
    

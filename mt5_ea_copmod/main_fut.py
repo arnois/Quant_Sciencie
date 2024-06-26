@@ -68,6 +68,15 @@ def init_models():
 ###############################################################################
 # MAIN 
 ###############################################################################
+# Manual models
+getModelsManual = False
+if getModelsManual:
+    models = {}
+    models['ES1'] = copstrat.pd.read_pickle(r'H:\Python\models\copmodel_ES1.pickle')
+    models['NQ1'] = copstrat.pd.read_pickle(r'H:\Python\models\copmodel_NQ1.pickle')
+    models['RTY1'] = copstrat.pd.read_pickle(r'H:\Python\models\copmodel_RTY1.pickle')
+
+# MAIN
 if __name__ == '__main__':
     # Excel session for database
     #wb = xw.Book(str_path+'\\'+filename+'.xlsx')

@@ -25,6 +25,7 @@ warnings.simplefilter("ignore")
 #str_cwd = os.path.dirname(os.path.realpath(sys.argv[0]))
 str_cwd = '\\\\tlaloc\\cuantitativa\\'+\
     'Fixed Income\\TIIE IRS Valuation Tool\\Arnua\\'
+str_cwd = r'U:\Fixed Income\TIIE IRS Valuation Tool\Arnua'
 os.chdir(str_cwd)
 sys.path.append(str_cwd)
 # Files
@@ -33,11 +34,11 @@ str_inputsFileExt = '.xlsx'
 str_file = str_inputsFileName + str_inputsFileExt
 
 # Valuation date
-dt_today = dt(2023,11,16)
+dt_today = dt(2024,5,29)
 ql_dt_today = ql.Date(dt_today.day, dt_today.month, dt_today.year)
 ql.Settings.instance().evaluationDate = ql_dt_today
 #ql_dt_yest = ql.Mexico().advance(ql_dt_today,-1,ql.Days)
-dt_posswaps = dt(2023,11,15)
+dt_posswaps = dt(2024,5,28)
 
 # UDM
 import TIIE_CurveCreate_v3 as curveC
@@ -46,14 +47,15 @@ import udf_TIIE_PfolioMgmt as udf_pfl
 # Portfolios
 # Swaps File
 str_dt_posswaps = dt_posswaps.strftime('%Y%m%d')
-str_posswps_file = r'E:\posSwaps\PosSwaps'+str_dt_posswaps+'.xlsx' # PosSwaps file 
+str_posswps_file = r'\\tlaloc\cuantitativa\Fixed Income\File Dump\PosSwaps\PosSwaps'+str_dt_posswaps+'.xlsx' # PosSwaps file 
+str_posswps_file = r'U:\Fixed Income\File Dump\PosSwaps\PosSwaps'+str_dt_posswaps+'.xlsx'
 df_tiieSwps = udf_pfl.setPfolio_tiieSwps(str_posswps_file) # Swaps' Portfolio
 
 #%% Selected Trades
-path_trioptima = r'C:\Users\jquintero\Downloads\pfolio_liveEx_20231116.xlsx'
-path_trioptima = r'C:\Users\jquintero\Downloads\pfolio_dressReh_20231115.xlsx'
+path_trioptima = r'C:\Users\jquintero\Downloads\pfolio_liveEx_20240529.xlsx'
+path_trioptima = r'C:\Users\jquintero\Downloads\pfolio_dressReh_20240528.xlsx'
 
-xlsheet = 'prevPfoliof' #'pfoliof'
+xlsheet = 'prevPfoliof' #'pfoliof' # 'prevPfoliof'
 pfoliof_tradeID = pd.read_excel(path_trioptima,xlsheet,usecols='C:C')
 
 # TriOptima Book
@@ -82,7 +84,7 @@ pfoliof_deltas = df_pfoliof[['TradeID']].merge(dic_book_valrisk['DV01_Swaps'],
 pfoliof_deltas['Flat'] = pfoliof_deltas.drop(columns=['TradeID']).sum(axis=1)
 
 #%% save
-save_name = r'C:\Users\jquintero\Downloads\pfolio_deltas_20231116.xlsx'
+save_name = r'C:\Users\jquintero\Downloads\pfolio_deltas_20240529.xlsx'
 pfoliof_deltas.to_excel(save_name)
 
 # NPV by Swap
@@ -91,5 +93,5 @@ pfoliof_npvs = df_pfoliof[['TradeID']].merge(dic_book_valrisk['NPV_Swaps'],
                                           left_index=True,
                                           right_index=True)
 # save
-save_name = r'C:\Users\jquintero\Downloads\pfolio_npv_20231116.xlsx'
+save_name = r'C:\Users\jquintero\Downloads\pfolio_npv_20240529.xlsx'
 pfoliof_npvs.to_excel(save_name)

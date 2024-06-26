@@ -148,17 +148,17 @@ if __name__ == '__main__':
                 mt5_interface.cancel_order(order)
             
             # CopMod strategy on selected symbol
-            #copstrat.strategy_one_mt5(symbol_for_strategy, 
-            #                          project_settings['timeframe'], 
-            #                          model, 
-            #                          project_settings['pip_size'], 
-            #                          lot_size)
+            copstrat.strategy_one_mt5(symbol_for_strategy, 
+                                      project_settings['timeframe'], 
+                                      model, 
+                                      project_settings['pip_size'], 
+                                      lot_size)
             # GreenWolf Strategy - CopMod on wiegthed M
-            copstrat.strategy_wM_mt5(symbol_for_strategy, 
-                                     project_settings['timeframe'], 
-                                     model, 
-                                     project_settings['pip_size'], 
-                                     lot_size)
+            #copstrat.strategy_wM_mt5(symbol_for_strategy, 
+            #                         project_settings['timeframe'], 
+            #                         model, 
+            #                         project_settings['pip_size'], 
+            #                         lot_size)
         else:
             # Get positions
             positions = mt5_interface.get_open_positions()

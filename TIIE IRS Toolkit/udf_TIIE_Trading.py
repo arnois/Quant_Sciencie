@@ -548,7 +548,16 @@ def eval_swap_fixings_banxico(swap, ibor_tiie):
         print(swap_CF)
     return
 
-def eval_swap_krr(i, swap, brCrvs, base_npv, dic_data):
+def eval_swap_krr(i, df_trades, ql_settle_dt, brCrvs, base_npv, dic_data):
+    # Get swap decoy
+    start, maturity = start_end_dates_trading(i, df_trades, ql_settle_dt)
+    input_notional = float(df_trades.loc[i,df_trades.columns[6]])
+    input_rate = df_trades.loc[i,df_trades.columns[7]]
+    notional = abs(input_notional)
+    rate = float(input_rate)
+    typ = int(np.sign(input_notional)*-1)
+    rule = (df_trades.loc[i,df_trades.columns[10]] == 'Forward')*1
+
     # DV01 market tenor
     modNPV = {}    
     for tenor in brCrvs.keys():
@@ -564,15 +573,15 @@ def eval_swap_krr(i, swap, brCrvs, base_npv, dic_data):
                      ql.Period(13),
                      1,
                      ql.MXNCurrency(),
-                     ql.Mexico(),
+                     ql.Mexico(0),
                      ql.Following,
                      False,
                      ql.Actual360(),
                      rytsForc)
         swap_list = []
-        swap_krr = tiieSwap(swap.startDate(), swap.maturityDate(), 
-            swap.nominal(), ibor_tiie_krr, swap.fixedRate(), 
-            swap.type(), swap.floatingSchedule().rule())     
+        
+        swap_krr = tiieSwap(start, maturity, notional, ibor_tiie_krr, rate, 
+                            typ, rule)     
         swap_krr.setPricingEngine(discEngine)  
         swap_list.append(swap_krr.NPV())
         modNPV[tenor] = swap_list
@@ -705,9 +714,9 @@ def displayMenu(ql_eval_dt, ql_settle_dt) -> int:
     print('What do you want to do?\n'+\
           '\t\t 1) Pricing                7) TW Collapse\n'+\
           '\t\t 2) ShortEnd Pricing       8) End Session\n'+\
-          '\t\t 3) Update Curves          9) w2...\n'+\
-          '\t\t 4) Fwds                  10) w3...\n'+\
-          '\t\t 5) Blotter               11) w4...\n'+\
+          '\t\t 3) Update Curves          9) Print Bstrpd Crvs\n'+\
+          '\t\t 4) Fwds                  10) Cost Rates\n'+\
+          '\t\t 5) Blotter               11) BO Rates\n'+\
           '\t\t 6) Corros pull           12) w5...\n')
     return int(input('\n\t\t option: '))
 ###############################################################################
@@ -752,7 +761,7 @@ def mxnois_when_USH(prev_date, crv_Z):
 
 def proc_BuildCurves(dic_data, banxico_TIIE28):
     # Check for US Holiday
-    isUSH = ql.UnitedStates().isHoliday(ql.Settings.instance().evaluationDate)
+    isUSH = ql.UnitedStates(0).isHoliday(ql.Settings.instance().evaluationDate)
     # USD Curves
     crvUSDOIS = udf.btstrap_USDOIS(dic_data)
     crvUSDSOFR = udf.btstrap_USDSOFR(dic_data, crvUSDOIS)
@@ -922,6 +931,7 @@ def proc_Pricing(ql_settle_dt, ibor_tiie, tiie_swp_engine, frCrvs, brCrvs,
             df_res, swap = eval_swprate(i, parameters_trades, ql_settle_dt, 
                          ibor_tiie, tiie_swp_engine, frCrvs, banxico_TIIE28)
             # Fill missing fields
+            parameters_trades.loc[i, 'Rate'] = df_res.loc[i,'FairRate']/100
             eval_swprate_fillblanks(i, df_res, wb_pricing)
         
         # NPV & DV01 given inputs
@@ -957,8 +967,8 @@ def proc_Pricing(ql_settle_dt, ibor_tiie, tiie_swp_engine, frCrvs, brCrvs,
         # KRR
         if isPrintRequestKRR and isKRRAsked:
             # Swap Risk Sens By Tenor
-            swap_krr = eval_swap_krr(i,swap,brCrvs,
-                                     df_res.loc[i,npvcol[0]], dic_data)
+            swap_krr = eval_swap_krr(i, parameters_trades, ql_settle_dt, 
+                                     brCrvs, df_res.loc[i,npvcol[0]], dic_data)
             # KRR Print
             if isKRRChecked:
                 #print_krr(swap_krr)
@@ -972,7 +982,248 @@ def proc_Pricing(ql_settle_dt, ibor_tiie, tiie_swp_engine, frCrvs, brCrvs,
     # KRR Group
     if not krr_group.empty:
         print_krr_group(krr_group, npv_group, krr_list)
+
+# Function to compute vanilla rates for given swap rates
+def proc_CostRates(ql_settle_dt, ibor_tiie, tiie_swp_engine, frCrvs, brCrvs,
+                 banxico_TIIE28, dic_data, str_cwd, str_file, 
+                 wb_pricing, wb_tiie):
+    
+    # custom module
+    main_path = '//TLALOC/Cuantitativa/Fixed Income/TIIE IRS Valuation Tool/'+\
+        'Main Codes/Portfolio Management/OOP codes/'
+    sys.path.append(main_path)
+    # Copy data and format types
+    opt_dic_data = {}
+    for name in dic_data.keys():
+        if name != 'USD_SOFR':
+            opt_dic_data[name] = dic_data[name].astype({'Period':'int'})
+        else:
+            opt_dic_data[name] = dic_data[name].copy()
+            opt_dic_data[name].loc[[0]+list(range(6,21))] = \
+                dic_data[name].loc[[0]+list(range(6,21))].astype({'Period':'int'})   
         
+    # Filter out unused tenors
+    opt_dic_data['USD_OIS'].drop(opt_dic_data['USD_OIS'].tail(1).index, inplace=True)
+    opt_dic_data['USD_SOFR'].drop(opt_dic_data['USD_SOFR'].tail(2).index, inplace=True)
+        
+    import curve_funs as cf
+    # Bootstrap disc/forc curves
+    curves = cf.mxn_curves(opt_dic_data)
+    
+    # Trades range
+    cellstr1 = "A3"
+    cellstr2 = wb_pricing.range(cellstr1).end('right').\
+        address.replace('$','')[0]+\
+            str(wb_pricing.range(cellstr1).end('down').row)
+    parameters_trades = wb_pricing.range(cellstr1+':'+cellstr2).\
+        options(pd.DataFrame, header=1, index=False, expand='table').value
+    parameters_trades = parameters_trades.set_index('Trade#').fillna(0)
+    
+    # Range to eval if calc costs
+    int_lRow = wb_pricing.range(cellstr1).end('down').row
+    rng_calc_check = wb_pricing.range("AH4:AH"+str(int_lRow)).value
+    
+    # Clear contents
+    wb_pricing.range("AI4:AV"+str(int_lRow)).clear_contents()
+    
+    # Checkd trades table
+    parameters_trades.insert(1,'CalcCost',rng_calc_check)
+    ididx_check = (parameters_trades['valChck'] != 0)*\
+        (parameters_trades['CalcCost'] == 'x')
+    new_parameters_trades = parameters_trades[ididx_check]
+    new_parameters_trades = new_parameters_trades.drop('CalcCost', axis=1)
+    parameters_trades = parameters_trades.drop('CalcCost', axis=1)
+    
+    # USDMXN
+    global input_fxrate 
+    input_fxrate = wb_pricing.range('E1').value
+    
+    # TIIE market
+    bidoffer = wb_tiie.range('G1:I15').\
+        options(pd.DataFrame, header=1, index=False, expand='table').value
+    bidoffer['Tenor'] = wb_tiie.range('B2:B15').value
+    bidoffer = bidoffer[['Tenor','Bid','Offer']]
+    
+    # BidOffer bounds
+    df_bounds = bidoffer[['Bid','Offer']].mean(axis=1).apply(lambda x: (x,x))
+    df_bounds.index = bidoffer['Tenor']
+    
+    # Objective function
+    from scipy.optimize import minimize
+    def fair_rate_l2(tiie_array: np.ndarray, start, end, notional, fixed_rate) -> float:
+        
+        dftiie = opt_dic_data['MXN_TIIE'].copy()
+        dftiie['Quotes'] = tiie_array
+        curves.change_tiie(dftiie)
+        swap = cf.tiieSwap(start, end, notional, fixed_rate, curves)
+        swap_rate = swap.fairRate()*100
+        
+        return 100*(target_rate - swap_rate)**2
+    
+    # Loop through each aceptable trade
+    for i,r in new_parameters_trades.iterrows():
+        # Reset bounds
+        df_bounds = bidoffer[['Bid','Offer']].mean(axis=1).apply(lambda x: (x,x))
+        df_bounds.index = bidoffer['Tenor']
+        
+        # Get NPV
+        df_res, swap = eval_npv_dv01(i, parameters_trades, ql_settle_dt, 
+                      ibor_tiie, tiie_swp_engine, frCrvs, banxico_TIIE28)
+        # KRR
+        swap_krr = eval_swap_krr(i, parameters_trades, ql_settle_dt, 
+                                 brCrvs, df_res.loc[i, 'NPV_Inputs'], dic_data)
+        # Most contributing buckets
+        swap_krr_mcb = swap_krr.T[swap_krr.T.abs()/swap_krr.T.abs().sum() > 0.15]
+        idx_tenors = swap_krr_mcb.index[(~swap_krr_mcb.isna()).to_numpy().reshape(-1,)]
+        
+        # Optimization params
+        notional = r['Notional_MXN']
+        start, end = start_end_dates_trading(i, parameters_trades, ql_settle_dt)
+        initial_rate = swap.fairRate()*100
+        target_rate = r['Rate']*100
+        target_tenors = bidoffer[bidoffer['Tenor'].apply(lambda x: x in idx_tenors.to_list())]
+        tenors_bounds = target_tenors.\
+            apply(lambda x: (x['Bid']-0.15,x['Offer']+0.15), axis=1)
+        df_bounds.loc[idx_tenors] = tenors_bounds.values
+        bounds = df_bounds.to_list()
+        
+        # Curve mids input
+        mid_quotes = bidoffer[['Bid','Offer']].mean(axis=1).to_numpy()
+        df_quotes = dic_data['MXN_TIIE'].copy()
+        df_quotes['Quotes'] = mid_quotes
+        curves.change_tiie(df_quotes)
+        swap = cf.tiieSwap(start.to_date(), end.to_date(), notional, initial_rate, curves)
+        
+        # Optimization
+        fixed_args = (start.to_date(), end.to_date(), notional, initial_rate)
+        optimal_rates = minimize(fair_rate_l2, mid_quotes, args=fixed_args,
+                                 method='L-BFGS-B', bounds=bounds,
+                                 options = {'maxiter': 400})
+        # Optimal inputs/outputs
+        optimal_tiies = optimal_rates.x
+        optimal_dftiie = dic_data['MXN_TIIE'].copy()
+        optimal_dftiie['Quotes'] = optimal_tiies
+        curves.change_tiie(optimal_dftiie)
+        swap = cf.tiieSwap(start.to_date(), end.to_date(), notional, initial_rate, curves)
+        
+        # Cost rates
+        df_optimal_inputs = dic_data['MXN_TIIE'][['Tenor']].copy()
+        df_optimal_inputs.insert(1,'Mid',mid_quotes)
+        df_optimal_inputs.insert(2,'Opt',optimal_tiies)
+        df_optimal_inputs = df_optimal_inputs.set_index('Tenor')
+        df_optimal_output = df_optimal_inputs.copy()[['Opt']]
+        df_optimal_output['Opt'] = ''
+        df_optimal_output.loc[idx_tenors,'Opt'] = df_optimal_inputs.loc[idx_tenors, 'Opt']
+        
+        # Print
+        wb_pricing.range("AI"+str(int(i+3))).value = df_optimal_output.T.values
+    
+    return None
+
+# Function to compute bid/offer rates
+def proc_BidOffer(ql_settle_dt, ibor_tiie, tiie_swp_engine, frCrvs, brCrvs,
+                 banxico_TIIE28, dic_data, str_cwd, str_file, 
+                 wb_pricing, wb_tiie):
+    
+    # custom module
+    main_path = '//TLALOC/Cuantitativa/Fixed Income/TIIE IRS Valuation Tool/'+\
+        'Main Codes/Portfolio Management/OOP codes/'
+    sys.path.append(main_path)
+    # Copy data and format types
+    opt_dic_data = {}
+    for name in dic_data.keys():
+        if name != 'USD_SOFR':
+            opt_dic_data[name] = dic_data[name].astype({'Period':'int'})
+        else:
+            opt_dic_data[name] = dic_data[name].copy()
+            opt_dic_data[name].loc[[0]+list(range(6,21))] = \
+                dic_data[name].loc[[0]+list(range(6,21))].astype({'Period':'int'})   
+        
+    # Filter out unused tenors
+    opt_dic_data['USD_OIS'].drop(opt_dic_data['USD_OIS'].tail(1).index, inplace=True)
+    opt_dic_data['USD_SOFR'].drop(opt_dic_data['USD_SOFR'].tail(2).index, inplace=True)
+        
+    import curve_funs as cf
+    # Bootstrap disc/forc curves
+    curves = cf.mxn_curves(opt_dic_data)
+    
+    # Trades range
+    cellstr1 = "A3"
+    cellstr2 = wb_pricing.range(cellstr1).end('right').\
+        address.replace('$','')[0]+\
+            str(wb_pricing.range(cellstr1).end('down').row)
+    parameters_trades = wb_pricing.range(cellstr1+':'+cellstr2).\
+        options(pd.DataFrame, header=1, index=False, expand='table').value
+    parameters_trades = parameters_trades.set_index('Trade#').fillna(0)
+    
+    # Range to eval if calc costs
+    int_lRow = wb_pricing.range(cellstr1).end('down').row
+    rng_calc_check = wb_pricing.range("AX4:AX"+str(int_lRow)).value
+    
+    # Clear contents
+    wb_pricing.range("BM4:BO"+str(int_lRow)).clear_contents()
+    
+    # Checkd trades table
+    parameters_trades.insert(1,'CalcBO',rng_calc_check)
+    ididx_check = (parameters_trades['valChck'] != 0)*\
+        (parameters_trades['CalcBO'] == 'x')
+    new_parameters_trades = parameters_trades[ididx_check]
+    new_parameters_trades = new_parameters_trades.drop('CalcBO', axis=1)
+    parameters_trades = parameters_trades.drop('CalcBO', axis=1)
+    
+    # USDMXN
+    global input_fxrate 
+    input_fxrate = wb_pricing.range('E1').value
+    
+    # TIIE market
+    bidoffer = wb_tiie.range('G1:I15').\
+        options(pd.DataFrame, header=1, index=False, expand='table').value
+    bidoffer['Tenor'] = wb_tiie.range('B2:B15').value
+    bidoffer = bidoffer[['Tenor','Bid','Offer']]
+    mkt_mid = bidoffer[['Bid','Offer']].mean(axis=1); mkt_mid.index=bidoffer['Tenor']
+    
+    # Loop through each aceptable trade
+    for i,r in new_parameters_trades.iterrows():        
+        # Swap fair rate
+        df_res, swap = eval_npv_dv01(i, parameters_trades, ql_settle_dt, 
+                      ibor_tiie, tiie_swp_engine, frCrvs, banxico_TIIE28)
+        # KRR
+        swap_krr = eval_swap_krr(i, parameters_trades, ql_settle_dt, 
+                                 brCrvs, df_res.loc[i, 'NPV_Inputs'], dic_data)
+        # Bucket spread
+        tmptnr = wb_pricing.range("AY3:BL3").value
+        tmpsprd = wb_pricing.range(f"AY{int(i+3)}:BL{int(i+3)}").value
+        df_bcktsprd = pd.DataFrame(tmpsprd, 
+                     index = tmptnr, 
+                     columns=[i]).fillna(0)*swap_krr.T.apply(np.sign)/100
+        
+        # Mkt mids with BO
+        mod_mkt_mid = mkt_mid.rename(i).to_frame() + df_bcktsprd
+        
+        # Curve mids input
+        mid_quotes = mod_mkt_mid.to_numpy()
+        df_quotes = dic_data['MXN_TIIE'].copy()
+        df_quotes['Quotes'] = mid_quotes
+        curves.change_tiie(df_quotes)
+        
+        # Swap inputs
+        notional = r['Notional_MXN']
+        start, end = start_end_dates_trading(i, parameters_trades, ql_settle_dt)
+        # BO Swap
+        swap_bo = cf.tiieSwap(start.to_date(), end.to_date(), 
+                           notional, swap.fairRate()*100, curves)
+        
+        # BO spread
+        sprd_bo = abs(10000*(swap_bo.fairRate() - swap.fairRate()))
+        tmpBid = (swap.fairRate() - sprd_bo/10000)
+        tmpOffer = (swap.fairRate() + sprd_bo/10000)
+        
+        # Print
+        wb_pricing.range(f"BM{int(i+3)}").value = tmpBid
+        wb_pricing.range(f"BN{int(i+3)}").value = tmpOffer
+        wb_pricing.range(f"BO{int(i+3)}").value = sprd_bo*2
+    
+    return None
 
 # Function to price collapse from tw
 def proc_PriceCollpse_tw(ql_settle_dt, ibor_tiie, tiie_swp_engine, frCrvs, 
@@ -999,6 +1250,9 @@ def proc_PriceCollpse_tw(ql_settle_dt, ibor_tiie, tiie_swp_engine, frCrvs,
     # Pricing Requests Processing
     wb_ctw.range("E:F").clear_contents()
     df_res = pd.DataFrame()
+    for j in range(4): parameters_trades.insert(0,j,0)
+    for j in range(2): parameters_trades.insert(len(parameters_trades.columns),'C'+str(j),0)
+    parameters_trades['Dt_Gen'] = 'Backward'
     for i,r in new_parameters_trades.iterrows():
         # NPV & DV01 given inputs: Evaluate for NPV & DV01
         # Specs
@@ -1031,9 +1285,9 @@ def proc_PriceCollpse_tw(ql_settle_dt, ibor_tiie, tiie_swp_engine, frCrvs,
         # NPV 
         npvcol = [s for s in df_res.columns.tolist() if 'NPV' in s]
         
-        # Swap Risk Sens By Tenor
-        swap_krr = eval_swap_krr(i,swap,brCrvs,
-                                 df_res.loc[i,npvcol[0]], dic_data)
+        # Swap Risk Sens By Tenor 
+        swap_krr = eval_swap_krr(i, parameters_trades, ql_settle_dt, 
+                                 brCrvs, df_res.loc[i,npvcol[0]], dic_data)
         # Grouped KRR      
         krr_group = pd.concat([krr_group, swap_krr])
         
@@ -1070,6 +1324,13 @@ def proc_Pricing_Blotter(ql_settle_dt, ibor_tiie, tiie_swp_engine,
         options(pd.DataFrame, header=1, index=False, expand='table').value
     parameters_trades = parameters_trades.set_index('Trade_#').fillna(0)    
     cols = wb_pricing.range('R1:AE1').value
+    # Params Dataframe adj
+    ptc = parameters_trades.columns.tolist().index('Start_Date')
+    if ptc != 4:
+        cols2Add = 4 - ptc
+        for i in range(cols2Add):
+            parameters_trades.insert(0,str(i+1),None)
+        
     # Pricing Requests Processing
     df_npv = pd.DataFrame(index = parameters_trades.index,columns=['npv'])
     df_bRisk = pd.DataFrame(index = parameters_trades.index,columns=cols)
@@ -1092,7 +1353,8 @@ def proc_Pricing_Blotter(ql_settle_dt, ibor_tiie, tiie_swp_engine,
         df_npv.loc[i,'npv'] = swap_npv
         #wb_pricing.range("A1").offset(i,15).value = swap_npv
         # Swap risk
-        df_risk = eval_swap_krr(i, swap, brCrvs, swap_npv, dic_data)
+        df_risk = eval_swap_krr(i, parameters_trades, ql_settle_dt, 
+                                 brCrvs, swap_npv, dic_data)
         df_bRisk.loc[i,:] = df_risk.values
         
     wb_pricing.range("P2").value = df_npv.values
@@ -1138,8 +1400,9 @@ def proc_displayCF(wb_pricing, ql_settle_dt, ibor_tiie, tiie_swp_engine):
             notional = r['Notional_MXN']
         # Swap RemParam
         typ = int(np.sign(notional)*-1)
+        rule = (r['Date_Generation'] == 'Forward')*1
         swap = tiieSwap(start, maturity, abs(notional), 
-                        ibor_tiie, swap_rate, typ, 0)
+                        ibor_tiie, swap_rate, typ, rule)
         # Swap CF Pmt Structure
         swap_cfOTR = get_CF_tiieSwapOTR(swap,ibor_tiie,ql_settle_dt)
         dic_trade_cf[i] = swap_cfOTR
@@ -1302,7 +1565,9 @@ def remate_closes(wb, evaluation_date, str_wbSheet='MXN_TIIE'):
     """
     
     # Look for pdf file with Remate closes
-    file_path = r'E:\Remate\REMATE CLOSING PRICES FOR '
+    strpath = r'U:\Fixed Income\File Dump\Valuaciones' # r'\\tlaloc\cuantitativa\Fixed Income\File Dump\Valuaciones'
+    strname = r'\REMATE CLOSING PRICES FOR '
+    file_path = strpath + strname
     yesterday_ql = ql.Mexico().advance(ql.Date().from_date(evaluation_date), 
                                        ql.Period(-1, ql.Days))
     file = file_path + yesterday_ql.to_date().strftime('%m%d%Y') + '.pdf'
