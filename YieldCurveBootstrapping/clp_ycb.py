@@ -103,9 +103,72 @@ def print_zero(date,yieldcurve):
     datatable = pd.DataFrame.from_dict(datatable)
     print(datatable)
 
-#%% CLP SWAPS YCB
+#%% WORKING DIRECTORY
+import os
+rsc_path = os.getcwd()+r'\resources'
+if not os.path.exists(rsc_path):
+    # Current working path
+    cwdp = os.getcwd()
+    rsc_path = cwdp + r'\resources'
 
-# CLP Swaps Market Tickers
+
+#%% EVALUATION DATE
+date_ql = ql.Date(27,6,2024)
+ql.Settings.instance().evaluationDate = date_ql
+str_evDate = date_ql.to_date().strftime('%Y-%m-%d')
+
+#%% MARKET DATA
+
+# Import
+dbpath = rsc_path+r'\db_Curves_mkt.xlsx'
+dfdb = pd.read_excel(dbpath, 'bgnPull',skiprows=3)
+dfdb = dfdb.drop([0,1]).set_index('Date')
+
+###############################################################################
+# USDOIS Swaps Market Tickers (USDOIS SMT)
+ois_idx_tkr = ['FEDL01 Index']
+sec = ['1Z','2Z','3Z','A','B','C','D','E','F','I','1','1F']
+lec = [2,3,4,5,7,10,12,15,20,25,30,40]
+ois_swp_tkr = [f'USSO{s} Curncy' for s in sec]+[f'USSO{s} Curncy' for s in lec]
+oistkrs = ois_idx_tkr + ois_swp_tkr
+ois_tenors = ['1B','1W','2W','3W']+[f'{n+1}M' for n in list(range(6))+[8,11,17]]
+ois_tenors += [f'{n}Y' for n in range(2,6)]
+ois_tenors += [f'{n}Y' for n in [7,10,12,15,20,25,30,40]]
+ois_periods = [int(s.replace('B','').replace('W','').replace('M','').\
+                   replace('Y','')) for s in ois_tenors]
+df_mkt_ois = pd.DataFrame(zip(ois_tenors, ois_periods), 
+                          columns=['Tenors', 'Period'], index=oistkrs)
+df_mkt_ois = df_mkt_ois.merge(dfdb.loc[str_evDate, oistkrs], 
+                              left_index=True, right_index=True)
+df_mkt_ois = df_mkt_ois.rename(columns={pd.Timestamp(str_evDate):'Quotes'})
+
+###############################################################################
+# IMM Futures OTR
+imm_dates = [ql.IMM.nextDate(ql.IMM.nextDate(date_ql)-ql.Period('3M')-ql.Period('1W'))]
+for n in range(4):
+    imm_dates += [ql.IMM.nextDate(imm_dates[n])]
+
+# SOFR SMT
+sofr_idx_tkr = ['SOFRRATE Index']
+sofr_fut_tkr = [f'SFR{ql.IMM.code(m)} Comdty' for m in imm_dates]
+lst_sofrswpTenors = list(range(2,11)) + [12] + list(range(15,30,5)) + list(range(30,50,10))
+sofr_swp_tkr = [f'USOSFR{n} BGN Curncy' for n in lst_sofrswpTenors]
+sofrtkrs = sofr_idx_tkr + sofr_fut_tkr + sofr_swp_tkr
+sofr_tenors = ['1B']+[s.replace(' Comdty','') for s in sofr_fut_tkr]
+sofr_tenors += [f'{n}Y' for n in list(range(2,11))+[12,15,20,25,30,40]]
+sofr_periods = ['1','1F','2F','3F','4F','5F']+[s.replace('Y','') for s in sofr_tenors if 'Y' in s]
+df_mkt_sofr = pd.DataFrame(zip(sofr_tenors, sofr_periods), 
+                          columns=['Tenors', 'Period'], index=sofrtkrs)
+df_mkt_sofr = df_mkt_sofr.merge(dfdb.loc[str_evDate, sofrtkrs], 
+                                left_index=True, right_index=True)
+df_mkt_sofr = df_mkt_sofr.rename(columns={pd.Timestamp(str_evDate):'Quotes'})
+df_mkt_sofr['Types'] = 'SWAP'
+df_mkt_sofr['Types'][df_mkt_sofr['Tenors']=='1B'] = 'DEPO'
+df_mkt_sofr['Types'][df_mkt_sofr['Period'].apply(lambda x: x[-1])=='F'] = 'FUT'
+df_mkt_sofr.loc[df_mkt_sofr['Types'] == 'SWAP','Tenors'] = \
+    df_mkt_sofr[df_mkt_sofr['Types'] == 'SWAP']['Tenors'].apply(lambda x: '%'+x)
+###############################################################################
+# CLP SMT
 clpswpstkrs = ['CHOVCHOV Index','CHSWPA Curncy','CHSWPB Curncy','CHSWPC Curncy',
         'CHSWPF Curncy','CHSWPI Curncy','CHSWP1 Curncy','CHSWP1F Curncy',
         'CHSWP2 Curncy','CHSWP3 Curncy','CHSWP4 Curncy','CHSWP5 Curncy',
@@ -117,15 +180,19 @@ df_mkt_clp = pd.DataFrame(zip(term, tenor),
              columns = ['Term','Tenor'], 
              index=clpswpstkrs)
 
-# Eval. Date
-date_ql = ql.Date(25,6,2024)
-ql.Settings.instance().evaluationDate = date_ql
-str_evDate = date_ql.to_date().strftime('%Y-%m-%d')
+#%% USDOIS CURVE
+import udf_PWTSB as f
+pcbUSDOIS = f.PiecewiseCurveBuilder_OIS(df_mkt_ois)
+pcbUSDOIS.set_qlHelper_USDOIS()
+pcbUSDOIS.btstrap_USDOIS('NLC')
 
+#%% SOFR CURVE
+pcbSOFR = f.PiecewiseCurveBuilder_SWAP(market_data=df_mkt_sofr, discCrv=pcbUSDOIS.crv)
+pcbSOFR.set_qlHelper_SOFR()
+pcbSOFR.btstrap_USDSOFR('NLC')
+
+#%% CLP SWAPS YCB
 # Spot Curve
-dbpath = r'U:\Fixed Income\File Dump\Database\db_Curves_mkt.xlsx'
-dfdb = pd.read_excel(dbpath, 'bgnPull',skiprows=3)
-dfdb = dfdb.drop([0,1]).set_index('Date')
 df_mkt_clp = df_mkt_clp.merge(dfdb.loc[str_evDate, clpswpstkrs], 
                               left_index=True, right_index=True)
 df_mkt_clp['qlTenor'] = df_mkt_clp['Tenor'].map(tenor2ql).values
@@ -152,10 +219,18 @@ cMkt = df_mkt_clp[df_mkt_clp['qlTenor']>=3]
 ql_TPM = ql.QuoteHandle(ql.SimpleQuote(onMkt[pd.Timestamp(str_evDate)]/100))
 ql_term = onMkt['Term']
 ql_tenor = onMkt['qlTenor']
+
+# CLP IMPLIED DISC CURVE
+## Depo
 helpers_ON = [ql.DepositRateHelper(ql_TPM, 
                                 ql.Period(int(onMkt['Term']), int(onMkt['qlTenor'])), 
                                 fixingDays, cal_clp, busAdj, eom, dc)]
 
+## NDF
+
+## NDS
+
+# CLP FORC CURVE
 # Helpers for 1-18 Months
 zeroHelpers = []
 for i,r in zMkt.iterrows():

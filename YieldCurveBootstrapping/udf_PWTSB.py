@@ -352,7 +352,7 @@ class PiecewiseCurveBuilder_SWAP:
         
         ## OIS Helpers
         swapHelpers = [ql.OISRateHelper(
-            self.fixingDays, ql.Period(n, unit), ql.QuoteHandle(swaps[(n,unit)]), 
+            self.fixingDays, ql.Period(int(n), int(unit)), ql.QuoteHandle(swaps[(n,unit)]), 
             self.swapIdx, discCrv, False, 2, self.busDayAdj, ql.Annual, cal) 
                for n, unit in swaps.keys()]
         
