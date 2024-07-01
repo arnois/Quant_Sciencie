@@ -113,7 +113,7 @@ if not os.path.exists(rsc_path):
 
 
 #%% EVALUATION DATE
-date_ql = ql.Date(27,6,2024)
+date_ql = ql.Date(28,6,2024)
 ql.Settings.instance().evaluationDate = date_ql
 str_evDate = date_ql.to_date().strftime('%Y-%m-%d')
 
@@ -179,6 +179,44 @@ tenor = ['D','M','M','M','M','M','M','M','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y'
 df_mkt_clp = pd.DataFrame(zip(term, tenor),
              columns = ['Term','Tenor'], 
              index=clpswpstkrs)
+# Spot Curve
+df_mkt_clp = df_mkt_clp.merge(dfdb.loc[str_evDate, clpswpstkrs], 
+                              left_index=True, right_index=True)
+df_mkt_clp['qlTenor'] = df_mkt_clp['Tenor'].map(tenor2ql).values
+
+# CLP NDF Tickers
+clp_ndf_tkrs = ['USDCLP Curncy', 'CHN1W Curncy', 'CHN2W Curncy', 'CHN3W Curncy',
+                'CHN1M Curncy', 'CHN2M Curncy', 'CHN3M Curncy',	'CHN4M Curncy',	
+                'CHN5M Curncy',	'CHN6M Curncy',	'CHN7M Curncy',	'CHN8M Curncy',	
+                'CHN9M Curncy',	'CHN10M Curncy', 'CHN11M Curncy',
+                'CHN12M Curncy', 'CHN18M Curncy']
+# CLP NDS Tickers
+clp_nds_tkrs = ['CPXOSS2 BGN Curncy',	'CPXOSS3 BGN Curncy', 
+                  'CPXOSS4 BGN Curncy',	'CPXOSS5 BGN Curncy',
+                  'CPXOSS6 BGN Curncy',	'CPXOSS7 BGN Curncy',
+                  'CPXOSS8 BGN Curncy',	'CPXOSS9 BGN Curncy',	
+                  'CPXOSS10 BGN Curncy','CPXOSS12 BGN Curncy',
+                  'CPXOSS15 BGN Curncy', 'CPXOSS20 BGN Curncy']
+# CLP vs SOFR Basis Spot Curve
+clp_basis_tkrs = clp_ndf_tkrs+clp_nds_tkrs
+df_mkt_clp_basis = pd.DataFrame(None, columns = ['Term','Tenor'], 
+                                index=clp_basis_tkrs)
+df_mkt_clp_basis = df_mkt_clp_basis.merge(dfdb.loc[str_evDate, clp_basis_tkrs], 
+                              left_index=True, right_index=True)
+df_mkt_clp_basis.loc[clp_ndf_tkrs[0],['Term','Tenor']] = [1,'B']
+df_mkt_clp_basis.loc[clp_ndf_tkrs[1:],'Tenor'] = [s.replace('CHN','').\
+                                                  replace(' Curncy','')[-1] 
+                                                  for s in clp_ndf_tkrs[1:]]
+    
+df_mkt_clp_basis.loc[clp_ndf_tkrs[1:],'Term'] = [int(s.replace('CHN','').\
+                                                  replace(' Curncy','')[:-1])
+                                                  for s in clp_ndf_tkrs[1:]]
+df_mkt_clp_basis.loc[clp_nds_tkrs, 'Term'] = [int(s.replace('CPXOSS','').\
+                                                  replace(' BGN Curncy','')) 
+                                              for s in clp_nds_tkrs]
+df_mkt_clp_basis.loc[clp_nds_tkrs, 'Tenor'] = 'Y'
+df_mkt_clp_basis['qlTenor'] = df_mkt_clp_basis['Tenor'].map(tenor2ql).values
+
 
 #%% USDOIS CURVE
 import udf_PWTSB as f
@@ -192,11 +230,7 @@ pcbSOFR.set_qlHelper_SOFR()
 pcbSOFR.btstrap_USDSOFR('NLC')
 
 #%% CLP SWAPS YCB
-# Spot Curve
-df_mkt_clp = df_mkt_clp.merge(dfdb.loc[str_evDate, clpswpstkrs], 
-                              left_index=True, right_index=True)
-df_mkt_clp['qlTenor'] = df_mkt_clp['Tenor'].map(tenor2ql).values
-
+exit()
 # Curve conventions
 cal_clp = ql.Chile(0)
 dc = ql.Actual360()
@@ -221,14 +255,54 @@ ql_term = onMkt['Term']
 ql_tenor = onMkt['qlTenor']
 
 # CLP IMPLIED DISC CURVE
+bSett = 2
+fxFixingDays = 2
+fxBusAdj = ql.Following
+fxEOM = False
+fxIsBaseColl = True
+fxCollCrv = ql.RelinkableYieldTermStructureHandle()
+fxCollCrv.linkTo(pcbUSDOIS.crv)
 ## Depo
 helpers_ON = [ql.DepositRateHelper(ql_TPM, 
                                 ql.Period(int(onMkt['Term']), int(onMkt['qlTenor'])), 
                                 fixingDays, cal_clp, busAdj, eom, dc)]
 
 ## NDF
-
+fxSwapHelper = []
+spotfx = df_mkt_clp_basis.loc[clp_ndf_tkrs[0], pd.Timestamp(str_evDate)]
+qlSpotFX = ql.QuoteHandle(ql.SimpleQuote(spotfx))
+for i,r in df_mkt_clp_basis.loc[clp_ndf_tkrs[1:]].iterrows():
+    qlQte = ql.QuoteHandle(ql.SimpleQuote(r[pd.Timestamp(str_evDate)]/1))
+    qlPer = ql.Period(int(r['Term']), int(r['qlTenor']))
+    fxSwapHelper += [ql.FxSwapRateHelper(qlQte, 
+                                         qlSpotFX, 
+                                         qlPer, 
+                                         fxFixingDays,
+                                         cal_clp, 
+                                         fxBusAdj, 
+                                         fxEOM, 
+                                         fxIsBaseColl, 
+                                         fxCollCrv)]
 ## NDS
+ndsHelpers = []
+fxIborIndex = ql.Sofr()
+for i,r in df_mkt_clp_basis.loc[clp_nds_tkrs].iterrows():
+    srate = cMkt[cMkt['Term'] == r['Term']][pd.Timestamp(str_evDate)].iloc[0]/100
+    qlQteS = ql.QuoteHandle(ql.SimpleQuote(srate))
+    qlQteB = ql.QuoteHandle(ql.SimpleQuote(r[pd.Timestamp(str_evDate)]/10000))
+    qlPer = ql.Period(int(r['Term']), int(r['qlTenor']))
+    ndsHelpers += [ql.SwapRateHelper(qlQteS, qlPer, cal_clp, pmtFreq, busAdj,
+                                     dc, fxIborIndex, qlQteB, ql.Period(0, ql.Days), 
+                                     ql.YieldTermStructureHandle(), 1)]
+
+basisHlprs = fxSwapHelper + ndsHelpers
+
+# CLP Disc Curve
+crvCLPOIS = ql.PiecewiseLogLinearDiscount(0, cal_clp, basisHlprs, dc)
+crvCLPOIS.enableExtrapolation()
+crvCLPOIS.zeroRate(date_ql+ql.Period('2Y'),dc,ql.Simple)
+crvCLPOIS.forwardRate(date_ql+ql.Period('1Y'), date_ql+ql.Period('2Y'), dc, ql.Simple)
+discCLP = ql.YieldTermStructureHandle(crvCLPOIS)
 
 # CLP FORC CURVE
 # Helpers for 1-18 Months
@@ -247,7 +321,7 @@ for i,r in cMkt.iterrows():
                                  tenor=qlPer,
                                  rate=qlQte,
                                  index=ICP,
-                                 discountingCurve=ql.YieldTermStructureHandle(), 
+                                 discountingCurve=discCLP, 
                                  telescopicValueDates=False, 
                                  paymentLag=0, 
                                  paymentConvention=busAdj, 
