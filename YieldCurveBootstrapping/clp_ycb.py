@@ -113,7 +113,7 @@ if not os.path.exists(rsc_path):
 
 
 #%% EVALUATION DATE
-date_ql = ql.Date(28,6,2024)
+date_ql = ql.Date(1,7,2024)
 ql.Settings.instance().evaluationDate = date_ql
 str_evDate = date_ql.to_date().strftime('%Y-%m-%d')
 
@@ -230,7 +230,7 @@ pcbSOFR.set_qlHelper_SOFR()
 pcbSOFR.btstrap_USDSOFR('NLC')
 
 #%% CLP SWAPS YCB
-exit()
+#exit()
 # Curve conventions
 cal_clp = ql.Chile(0)
 dc = ql.Actual360()
@@ -297,11 +297,12 @@ for i,r in df_mkt_clp_basis.loc[clp_nds_tkrs].iterrows():
 
 basisHlprs = fxSwapHelper + ndsHelpers
 
-# CLP Disc Curve
-crvCLPOIS = ql.PiecewiseLogLinearDiscount(0, cal_clp, basisHlprs, dc)
+# CLP Disc Curve # PiecewiseLogLinearDiscount
+crvCLPOIS = ql.PiecewiseNaturalLogCubicDiscount(0, cal_clp, basisHlprs, dc) # PiecewiseNaturalLogCubicDiscount
 crvCLPOIS.enableExtrapolation()
-crvCLPOIS.zeroRate(date_ql+ql.Period('2Y'),dc,ql.Simple)
-crvCLPOIS.forwardRate(date_ql+ql.Period('1Y'), date_ql+ql.Period('2Y'), dc, ql.Simple)
+crvCLPOIS.zeroRate(date_ql+ql.Period('2Y'),dc,ql.Simple).rate()
+crvCLPOIS.forwardRate(date_ql+ql.Period('1Y'), 
+                      date_ql+ql.Period('2Y'), dc, ql.Simple).rate()
 discCLP = ql.YieldTermStructureHandle(crvCLPOIS)
 
 # CLP FORC CURVE
@@ -342,10 +343,10 @@ print_zero(date_ql, crvCLP)
 rYTS_CLP = ql.RelinkableYieldTermStructureHandle(crvCLP)
 ICP = ql.OvernightIndex("ICP",settlement_days_icp,ql.CLPCurrency(),cal_clp,dc,
                         rYTS_CLP)
-icp_swp_engine = ql.DiscountingSwapEngine(rYTS_CLP)
+icp_swp_engine = ql.DiscountingSwapEngine(discCLP)
 if cal_clp.isHoliday(date_ql):
     ICP.addFixing(date_ql - ql.Period('1D'), 
-                  rYTS_CLP.forwardRate(date_ql, date_ql+ql.Period('1D'), 
+                  crvCLP.forwardRate(date_ql, date_ql+ql.Period('1D'), 
                                        dc, ql.Compounded, ql.Daily).rate())
 
 # Mkt RepRicing
